@@ -1,0 +1,78 @@
+name: Build Desktop (Windows)
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-windows.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Chatly Desktop (Windows, unsigned portable)
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Chatly
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install build tools
+        shell: pwsh
+        run: |
+          choco install -y --no-progress ninja cmake python3 7zip
+          python --version
+          cmake --version
+
+      - name: Cache upstream + build directory
+        uses: actions/cache@v4
+        with:
+          path: |
+            upstream-cache/tdesktop
+            apps/desktop/out
+          key: tdesktop-windows-${{ hashFiles('apps/desktop/upstream.txt', 'apps/desktop/build-windows.ps1') }}
+          restore-keys: |
+            tdesktop-windows-
+
+      - name: Build
+        shell: pwsh
+        env:
+          TELEGRAM_API_ID:   ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          if (-not $env:TELEGRAM_API_ID -or -not $env:TELEGRAM_API_HASH) {
+            Write-Host '::warning::TELEGRAM_API_ID / TELEGRAM_API_HASH are not set as repo secrets.'
+            Write-Host '::warning::Using dummy compile-only credentials. The binary will NOT be able to log in to Telegram.'
+            Write-Host '::warning::Get real values from https://my.telegram.org and add as repo secrets to fix this.'
+            $env:TELEGRAM_API_ID   = '1'
+            $env:TELEGRAM_API_HASH = '00000000000000000000000000000000'
+          }
+          pwsh -File .\apps\desktop\build-windows.ps1
+
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          if (Test-Path apps\desktop\out) {
+            Compress-Archive -Path apps\desktop\out\* -DestinationPath artifacts\Chatly-windows-portable.zip -Force
+          }
+          Get-ChildItem artifacts -ErrorAction SilentlyContinue
+
+      - name: Upload Windows artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chatly-Windows
+          path: artifacts/*
+          if-no-files-found: warn
+          retention-days: 14

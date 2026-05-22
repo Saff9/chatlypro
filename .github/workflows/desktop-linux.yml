@@ -1,0 +1,81 @@
+name: Build Desktop (Linux)
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-linux.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/desktop-linux.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Chatly Desktop (Linux, unsigned)
+    runs-on: ubuntu-22.04
+    # TDesktop is a multi-hour build from scratch; CI cache makes subsequent
+    # runs much faster, but the first run can be slow.
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Chatly
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
+                      /opt/ghc /usr/local/share/boost \
+                      /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      - name: Cache upstream + build directory
+        uses: actions/cache@v4
+        with:
+          path: |
+            upstream-cache/tdesktop
+            apps/desktop/out
+          key: tdesktop-linux-${{ hashFiles('apps/desktop/upstream.txt', 'apps/desktop/build-linux.sh') }}
+          restore-keys: |
+            tdesktop-linux-
+
+      - name: Pull TDesktop build image
+        run: |
+          # Use upstream's official build container so we don't need to
+          # install Qt/ffmpeg/etc on the runner.
+          docker pull tdesktop/centos_env:latest
+
+      - name: Build
+        env:
+          TELEGRAM_API_ID:   ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          if [ -z "$TELEGRAM_API_ID" ] || [ -z "$TELEGRAM_API_HASH" ]; then
+            echo '::warning::TELEGRAM_API_ID / TELEGRAM_API_HASH are not set as repo secrets.'
+            echo '::warning::Using dummy compile-only credentials. The binary will NOT be able to log in to Telegram.'
+            echo '::warning::Get real values from https://my.telegram.org and add as repo secrets to fix this.'
+            export TELEGRAM_API_ID=1
+            export TELEGRAM_API_HASH=00000000000000000000000000000000
+          fi
+          ./apps/desktop/build-linux.sh
+
+      - name: Package AppImage / tarball
+        run: |
+          mkdir -p artifacts
+          # The exact name TDesktop emits depends on its CMake target; collect
+          # whatever ended up in the output dir.
+          if [ -d apps/desktop/out ]; then
+            tar -C apps/desktop/out -czf artifacts/Chatly-linux.tar.gz . || true
+          fi
+          ls -la artifacts || true
+
+      - name: Upload Linux artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chatly-Linux
+          path: artifacts/*
+          if-no-files-found: warn
+          retention-days: 14

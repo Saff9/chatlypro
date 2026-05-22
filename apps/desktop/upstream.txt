@@ -1,0 +1,4 @@
+# Pinned upstream ref for TDesktop.
+# Format: <repo-url> <tag-or-sha>
+# Bumping this is a deliberate act — pair with overlay/patch updates if needed.
+https://github.com/telegramdesktop/tdesktop.git v6.8.3

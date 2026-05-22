@@ -1,0 +1,17 @@
+Chatly is licensed under the GNU General Public License, version 3 or later
+(GPL-3.0-or-later), as required by the GPL terms inherited from the upstream
+TDesktop project (GPL-3.0-or-later) which it is derived from.
+
+The Android portion of Chatly is additionally a derivative of Telegram-Android,
+which is licensed under GPL-2.0-or-later. The combined Android binary is
+distributed under GPL-3.0-or-later (compatible with GPL-2.0-or-later).
+
+The full text of the GNU General Public License, version 3, is available at:
+
+    https://www.gnu.org/licenses/gpl-3.0.txt
+
+The full text of the GNU General Public License, version 2, is available at:
+
+    https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+See NOTICE.md for upstream attribution and trademark notices.

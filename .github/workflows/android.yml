@@ -1,0 +1,86 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "apps/android/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "apps/android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Chatly Android (debug, unsigned)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Chatly
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        # Android build needs ~20GB; ubuntu-latest ships with lots of pre-installed
+        # tooling we don't need.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK (matches upstream)
+        run: |
+          # Telegram-Android pins an NDK version in its gradle config; install
+          # a reasonably recent one and let the build fail loud if mismatched.
+          yes | sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;27.0.12077973" \
+            "cmake;3.22.1"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            upstream-cache
+          key: gradle-android-${{ hashFiles('apps/android/upstream.txt', 'apps/android/build.sh') }}
+          restore-keys: |
+            gradle-android-
+
+      - name: Build debug APK
+        env:
+          TELEGRAM_API_ID:   ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          if [ -z "$TELEGRAM_API_ID" ] || [ -z "$TELEGRAM_API_HASH" ]; then
+            echo '::warning::TELEGRAM_API_ID / TELEGRAM_API_HASH are not set as repo secrets.'
+            echo '::warning::Using dummy compile-only credentials. The resulting APK will NOT be able to log in to Telegram.'
+            echo '::warning::Get real values from https://my.telegram.org and add as repo secrets to fix this.'
+            export TELEGRAM_API_ID=1
+            export TELEGRAM_API_HASH=00000000000000000000000000000000
+          fi
+          ./apps/android/build.sh debug
+
+      - name: Upload APK artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chatly-Android-debug
+          path: |
+            apps/android/out/*.apk
+          if-no-files-found: error
+          retention-days: 14
