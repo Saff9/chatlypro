@@ -91,18 +91,18 @@ jobs:
             echo "::warning::BuildVars.java not found at expected location."
           fi
 
-      - name: Build inside upstream's official Docker container
+      - name: Build the Chatly Android Docker image
         run: |
-          # Build the upstream Dockerfile (gradle:7.0.2-jdk11 + Android SDK 33 + NDK 21).
-          # This image is correct for release-11.4.2-5469 — see upstream's Dockerfile.
-          cd "$UPSTREAM_DIR"
-          docker build -t chatly-android-builder .
+          # We don't use upstream's Dockerfile directly because at this tag it
+          # pins gradle 7.0.2 while the source pins AGP 8.4.2 (needs Gradle 8.6+).
+          # See apps/android/build-helpers/Dockerfile for the explanation.
+          docker build -t chatly-android-builder -f apps/android/build-helpers/Dockerfile .
 
-          # Override the upstream CMD: we only need the unsigned Standalone APK,
-          # not the AAB / Huawei / signed-release artifacts that the default CMD
-          # builds (those require keystores).
+      - name: Build APK
+        run: |
           docker run --rm \
             -v "$UPSTREAM_DIR":/home/source \
+            -w /home/source \
             chatly-android-builder \
             bash -c '
               set -euo pipefail
@@ -110,14 +110,16 @@ jobs:
               cp -R /home/source/. /home/gradle
               cd /home/gradle
               gradle :TMessagesProj_AppStandalone:assembleAfatStandalone --no-daemon --stacktrace
-              cp -R /home/gradle/TMessagesProj_AppStandalone/build/outputs/apk/. \
-                    /home/source/TMessagesProj/build/outputs/apk
+              mkdir -p /home/source/out
+              find TMessagesProj_AppStandalone/build/outputs/apk -name "*.apk" -exec cp -v {} /home/source/out/ \;
             '
 
       - name: Collect APK
         run: |
           mkdir -p apps/android/out
-          find "$UPSTREAM_DIR/TMessagesProj/build/outputs/apk" -name '*.apk' -exec cp -v {} apps/android/out/ \;
+          if [ -d "$UPSTREAM_DIR/out" ]; then
+            cp -v "$UPSTREAM_DIR"/out/*.apk apps/android/out/ 2>/dev/null || true
+          fi
           ls -la apps/android/out
 
       - name: Upload APK artifact

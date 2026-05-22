@@ -116,12 +116,13 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 67
 fi
 
-echo "  Building upstream Docker image (first run takes ~10min)..."
-docker build -t chatly-android-builder "$UPSTREAM_DIR"
+echo "  Building Chatly Android Docker image (first run takes ~10min)..."
+docker build -t chatly-android-builder -f "$HERE/build-helpers/Dockerfile" "$HERE/.."
 
 echo "  Running build inside container..."
 docker run --rm \
   -v "$UPSTREAM_DIR":/home/source \
+  -w /home/source \
   chatly-android-builder \
   bash -c '
     set -euo pipefail
@@ -129,13 +130,13 @@ docker run --rm \
     cp -R /home/source/. /home/gradle
     cd /home/gradle
     gradle :TMessagesProj_AppStandalone:assembleAfatStandalone --no-daemon --stacktrace
-    cp -R /home/gradle/TMessagesProj_AppStandalone/build/outputs/apk/. /home/source/TMessagesProj/build/outputs/apk
+    mkdir -p /home/source/out
+    find TMessagesProj_AppStandalone/build/outputs/apk -name "*.apk" -exec cp -v {} /home/source/out/ \;
   '
 
 # Collect output.
 mkdir -p "$OUTPUT_DIR"
-find "$UPSTREAM_DIR/TMessagesProj/build/outputs/apk" -name '*.apk' -print0 \
-  | xargs -0 -I {} cp -v {} "$OUTPUT_DIR/"
+cp -v "$UPSTREAM_DIR"/out/*.apk "$OUTPUT_DIR/" 2>/dev/null || true
 echo
 echo "Build done. APKs in: $OUTPUT_DIR"
 ls -la "$OUTPUT_DIR"
