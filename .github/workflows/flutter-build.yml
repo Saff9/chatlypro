@@ -28,12 +28,6 @@ jobs:
         run: |
           cd apps/mobile
           flutter pub get
-
-      - name: Generate platform files
-        run: |
-          cd apps/mobile
-          flutter create --platforms=android .
-
       - name: Build APK
         run: |
           cd apps/mobile
@@ -60,12 +54,6 @@ jobs:
         run: |
           cd apps/mobile
           flutter pub get
-
-      - name: Generate platform files
-        run: |
-          cd apps/mobile
-          flutter create --platforms=web .
-
       - name: Build Web
         run: |
           cd apps/mobile
@@ -92,12 +80,6 @@ jobs:
         run: |
           cd apps/mobile
           flutter pub get
-
-      - name: Generate platform files
-        run: |
-          cd apps/mobile
-          flutter create --platforms=windows .
-
       - name: Build Windows
         run: |
           cd apps/mobile

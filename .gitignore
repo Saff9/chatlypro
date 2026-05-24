@@ -20,13 +20,7 @@ dist/
 .pub/
 build/
 
-# Platform-specific generated folders (recreated via flutter create)
-apps/mobile/android/
-apps/mobile/ios/
-apps/mobile/linux/
-apps/mobile/macos/
-apps/mobile/windows/
-apps/mobile/web/
+# Platform-specific generated folders (we track native config, but ignore transient/build artifacts via general rules)
 
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
