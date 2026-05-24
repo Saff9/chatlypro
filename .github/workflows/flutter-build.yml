@@ -1,0 +1,111 @@
+name: Chatly Flutter Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.19.x'
+
+      - name: Install dependencies
+        run: |
+          cd apps/mobile
+          flutter pub get
+
+      - name: Generate platform files
+        run: |
+          cd apps/mobile
+          flutter create --platforms=android .
+
+      - name: Build APK
+        run: |
+          cd apps/mobile
+          flutter build apk --release --split-per-abi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatly-android-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+
+  build-web:
+    name: Build Web App
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: |
+          cd apps/mobile
+          flutter pub get
+
+      - name: Generate platform files
+        run: |
+          cd apps/mobile
+          flutter create --platforms=web .
+
+      - name: Build Web
+        run: |
+          cd apps/mobile
+          flutter build web --release
+
+      - name: Upload Web Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatly-web-build
+          path: apps/mobile/build/web/
+
+  build-windows:
+    name: Build Windows App
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: |
+          cd apps/mobile
+          flutter pub get
+
+      - name: Generate platform files
+        run: |
+          cd apps/mobile
+          flutter create --platforms=windows .
+
+      - name: Build Windows
+        run: |
+          cd apps/mobile
+          flutter build windows --release
+
+      - name: Upload Windows Executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatly-windows-exe
+          path: apps/mobile/build/windows/runner/Release/

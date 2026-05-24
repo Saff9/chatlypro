@@ -1,131 +1,218 @@
+<div align="center">
+
+<img src="apps/mobile/assets/images/app_icon.png" alt="Chatly Logo" width="100" height="100" style="border-radius: 22px;" />
+
 # Chatly
 
-Chatly is a rebranded fork of the official Telegram open-source clients
-([Telegram-Android](https://github.com/DrKLO/Telegram) and
-[TDesktop](https://github.com/telegramdesktop/tdesktop)), packaged for Android,
-Windows, and Linux.
+**The secure, private, end-to-end encrypted messenger built for the real world.**
 
-> **Status:** scaffolding / unsigned debug builds. Production signing,
-> store distribution, and trademark/branding asset replacement are tracked
-> in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+[![Flutter](https://img.shields.io/badge/Flutter-3.x-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
+[![Node.js](https://img.shields.io/badge/Node.js-18.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](CONTRIBUTING.md)
+
+*If you find Chatly useful, please consider giving it a ⭐ on GitHub — it helps others discover the project.*
+
+[Features](#features) · [Architecture](#architecture) · [Quick Start](#quick-start) · [Deployment](#deployment) · [Roadmap](docs/ROADMAP.md) · [Security](docs/SECURITY.md)
+
+</div>
 
 ---
 
-## Repository layout
+## What is Chatly?
+
+Chatly is a **privacy-first messaging platform** that combines a Flutter cross-platform client with a stateless Fastify relay and a Python FastAPI machine-learning moderation microservice.
+
+Unlike conventional messaging apps that store message history on centralized servers, Chatly operates on a **zero-trace relay model**: messages are processed entirely in-memory and scrubbed the moment they are delivered. No message logs. No metadata retention. No surveillance surface.
+
+---
+
+## Features
+
+### Security & Privacy
+- **End-to-End Encryption** — X25519 Diffie-Hellman key exchange with AES-256-GCM symmetric encryption. Keys are generated on-device and never leave the client.
+- **Zero-Trace Relay Pipeline** — The backend holds messages transiently in RAM (or Redis with a 24-hour TTL if the recipient is offline) and deletes them immediately upon delivery.
+- **Email Verification & 2-Step Verification** — Every account goes through an email OTP gate. Optional TOTP-based second factor is available from the Security settings.
+- **Disposable Email Blocking** — Server-side blocklist prevents sign-ups from known temporary mail providers.
+- **Vault Chats** — Ephemeral on-device sessions that live entirely in RAM. Closing the session clears the memory heap.
+- **Duress / Decoy Mode** — A secondary PIN unlocks a convincing decoy interface with innocent conversations. The real inbox remains hidden.
+- **Calculator Disguise** — The app can masquerade as a working calculator. A secret code re-opens the real application.
+- **Dead Man's Switch** — Configurable auto-wipe of all local data after a period of inactivity (default: 30 days).
+- **Shake-to-Panic** — A quick device shake triggers an immediate decoy switch.
+- **Forensic Eraser** — Multi-pass overwrite of deleted messages to prevent recovery by forensic tools.
+
+### Messaging
+- **Rich Chat Experience** — Voice messages, file attachments, reactions, read receipts, and typing indicators.
+- **Message Reactions** — Six built-in reactions with an extensible backend catalogue.
+- **Ephemeral Timers** — Per-message configurable self-destruct timers (30 s / 1 min / 5 min / 1 hr).
+- **Secure Keyboard** — Optional on-screen keyboard that blocks screenshot capture and keyloggers.
+- **AI Toxicity Moderation** — The FastAPI ML service classifies outgoing messages for toxic content using a fine-tuned BERT model (Detoxify), with a keyword regex fallback for zero-dependency deployments.
+
+### Discovery & Community
+- **Lucky Pulse** — Anonymous interest-based broadcast system. Post a message without revealing your identity. Mutual interest upgrades to a private encrypted chat.
+- **Groups** — Fully encrypted group chats. Includes **Campfire Groups** — ephemeral groups that auto-dissolve and shred their logs after a user-defined timer.
+- **P2P Mesh** — Offline messaging between nearby devices over a local UDP/TCP mesh network.
+- **Proximity Pairing** — NFC-style close-proximity connection requests visible in the chat list.
+
+### Personalization
+- **15+ Themes** — Obsidian, Dracula, Cyberpunk, Deep Ocean, Emerald, and more.
+- **Chat Wallpapers** — 5+ premium wallpapers built in. Swap or set custom.
+- **Custom Fonts** — 5 curated typeface options including Inter and Roboto.
+- **Smart Moods** — Custom status markers replace intrusive "last seen" timestamps.
+- **Relationship Health Rings** — Visual engagement score rings on contact avatars based on message frequency.
+
+---
+
+## Architecture
 
 ```
-.
+chatly/
 ├── apps/
-│   ├── android/           # Chatly Android client (overlay on Telegram-Android)
-│   │   ├── overlay/       # files copied OVER upstream after `git clone`
-│   │   ├── patches/       # *.patch files applied OVER upstream
-│   │   ├── resources/     # Chatly icons, colors, strings
-│   │   ├── upstream.txt   # pinned upstream git ref
-│   │   └── build.sh       # clones upstream, applies overlay+patches, builds
-│   └── desktop/           # Chatly desktop (overlay on TDesktop)
-│       ├── overlay/
-│       ├── patches/
-│       ├── resources/
-│       ├── upstream.txt
-│       ├── build-linux.sh
-│       └── build-windows.ps1
-├── web/                   # legacy Next.js portfolio (preserved, not part of Chatly)
-├── .github/workflows/     # CI for Android + Desktop builds
-├── docs/                  # architecture, roadmap, GPL compliance notes
-├── NOTICE.md              # upstream attribution & GPL compliance
-└── LICENSE                # GPL terms inherited from upstream
+│   └── mobile/                   # Flutter client (Android · iOS · Web · Windows · macOS · Linux)
+│       ├── assets/               # App icon, wallpapers, Lottie animations
+│       └── lib/
+│           ├── core/             # Shared widgets, theme tokens, AppConfig
+│           ├── features/         # Screen-level feature modules (auth, chat, groups, pulse, settings)
+│           ├── navigation/       # Bottom nav shell with adaptive desktop layout
+│           ├── providers/        # Riverpod global state (theme, connection, layout, wallpaper)
+│           └── services/         # Business logic (auth, websocket, E2E crypto, push, P2P)
+│
+├── packages/
+│   ├── chatly-server/            # Fastify backend (Node.js + TypeScript)
+│   │   └── src/
+│   │       ├── db/               # PostgreSQL schema init + in-memory fallback
+│   │       ├── routes/           # REST endpoints: /api/auth/*
+│   │       ├── services/         # Email (Nodemailer + Ethereal), push tokens
+│   │       └── sockets/          # WebSocket connection handler & message routing
+│   │
+│   └── chatly-ml/                # Python FastAPI ML microservice
+│       ├── app.py                # FastAPI server + endpoint definitions
+│       └── requirements.txt      # detoxify, torch, fastapi, uvicorn
+│
+├── docs/
+│   ├── ARCHITECTURE.md           # Detailed technical architecture breakdown
+│   ├── SECURITY.md               # Cryptographic flows and threat model
+│   ├── DEVELOPMENT.md            # Local development setup
+│   ├── HOSTING.md                # Production hosting guide (Railway, Supabase, Upstash)
+│   ├── DEPLOYMENT.md             # APK / EXE / Web build instructions
+│   └── ROADMAP.md                # Upcoming feature milestones
+│
+└── README.md
 ```
 
-We do **not** vendor the upstream source in this repo. Instead, every build
-runs `apps/<platform>/build.sh`, which:
+### Key Technical Decisions
 
-1. `git clone --depth 1` of the upstream repo at the pinned ref in `upstream.txt`
-2. Copies files from `overlay/` over the working tree (replaces icons, strings,
-   `BuildVars.java` style files, package id stubs, etc.)
-3. Applies any `.patch` files in `patches/` in order
-4. Injects build-time secrets (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`) from env
-5. Invokes the upstream's normal build command
-
-This keeps our repo tiny, makes upstream tracking trivial, and never
-fights upstream's build system.
+| Decision | Rationale |
+|---|---|
+| **Fastify over Express** | 3× higher throughput, built-in schema validation, TypeScript-first |
+| **Riverpod over Provider/Bloc** | Compile-safe, no BuildContext dependency, testable |
+| **Hive over SQLite** | Pure Dart, encrypted boxes, no JNI overhead on Android |
+| **X25519 + AES-256-GCM** | Best-in-class key agreement + authenticated encryption |
+| **In-memory relay** | Zero-trace model: no message hits disk on the relay server |
 
 ---
 
-## Building
+## Quick Start
 
 ### Prerequisites
+- [Node.js](https://nodejs.org) v18 or newer
+- [Python](https://python.org) 3.10 or newer
+- [Flutter SDK](https://flutter.dev/docs/get-started/install) 3.x
 
-| Build         | Where it runs    | What you need                                                       |
-|---------------|------------------|---------------------------------------------------------------------|
-| Android APK   | Linux            | JDK 17, Android SDK + NDK (CI auto-installs), `TELEGRAM_API_ID/HASH` |
-| Desktop Linux | Linux            | docker (uses upstream's official build container)                   |
-| Desktop Win   | Windows          | Visual Studio 2022, Python, `TELEGRAM_API_ID/HASH`                  |
-
-### Secrets
-
-Both clients require `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from
-<https://my.telegram.org> → API development tools. Without these, the apps
-compile but crash on first network call.
-
-In CI we read them from GitHub repository secrets of the same name.
-For local builds export them in your shell before running `build.sh`:
-
+### 1. Clone the Repository
 ```bash
-export TELEGRAM_API_ID=12345
-export TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef
-./apps/android/build.sh debug
+git clone https://github.com/Saff9/chatlypro.git
+cd chatlypro
 ```
 
-### Local builds
-
+### 2. Start the Backend
 ```bash
-# Android (debug APK, unsigned)
-./apps/android/build.sh debug
-
-# Desktop Linux (AppImage)
-./apps/desktop/build-linux.sh
-
-# Desktop Windows (run on a Windows host)
-pwsh ./apps/desktop/build-windows.ps1
+cd packages/chatly-server
+npm install
+npm run dev
+# Fastify starts on http://localhost:5000
+# No database config needed — boots with in-memory fallback automatically.
 ```
 
-### CI
+### 3. Start the ML Service (Optional)
+```bash
+cd packages/chatly-ml
+pip install -r requirements.txt
+python app.py
+# FastAPI starts on http://localhost:8000
+```
 
-Pushes to any branch trigger three workflows:
-
-- **android.yml** → produces `Chatly-debug.apk` artifact
-- **desktop-linux.yml** → produces `Chatly-linux.AppImage` artifact
-- **desktop-windows.yml** → produces `Chatly-windows-portable.zip` artifact
-
-Download from the GitHub Actions run page.
+### 4. Run the Flutter Client
+```bash
+cd apps/mobile
+flutter pub get
+flutter run -d chrome          # Web browser
+flutter run -d windows         # Windows desktop
+flutter run                    # Connected Android/iOS device
+```
 
 ---
 
-## License & attribution
+## Deployment
 
-This project is a derivative work of upstream Telegram clients and is therefore
-distributed under the **GNU General Public License**. Telegram-Android is
-GPL-2.0+, TDesktop is GPL-3.0. See [`NOTICE.md`](NOTICE.md) and
-[`docs/GPL-COMPLIANCE.md`](docs/GPL-COMPLIANCE.md).
+### Quick Deploy to Railway
 
-The names "Telegram" and the Telegram paper-plane logo are trademarks of
-**Telegram FZ-LLC**. Chatly does not use those names or marks in distributed
-builds — see [`apps/*/overlay/`](apps) for the rebrand layer.
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app)
+
+See the full step-by-step guide in [docs/HOSTING.md](docs/HOSTING.md).
+
+### Build Release APK
+```bash
+cd apps/mobile
+flutter build apk --release \
+  --dart-define=BASE_URL=https://your-api-domain.com/api \
+  --dart-define=WS_URL=wss://your-api-domain.com
+```
+
+### Build Windows EXE
+```bash
+cd apps/mobile
+flutter build windows --release \
+  --dart-define=BASE_URL=https://your-api-domain.com/api
+```
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full platform-specific instructions.
 
 ---
 
-## Security review
+## Environment Variables
 
-Forking a Telegram client does **not** inherit Telegram's server-side security
-guarantees. The MTProto encryption and the threat model around it depend on
-talking to Telegram's servers with a Telegram-issued API_ID. If you ship Chatly
-to real users:
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | No | PostgreSQL connection string. Falls back to in-memory store. |
+| `REDIS_URL` | No | Upstash/Redis connection URL. Falls back to in-memory Map. |
+| `JWT_SECRET` | **Yes (prod)** | Minimum 32-character random string for signing auth tokens. |
+| `ALLOWED_ORIGINS` | No | Comma-separated CORS origin whitelist. Defaults to `*` in dev. |
+| `PORT` | No | Server port. Defaults to `5000`. |
+| `NODE_ENV` | No | `development` or `production`. Enables production-only checks. |
 
-- Telegram may revoke your API_ID under their "no clones of official apps" policy.
-- All messages still flow through Telegram's servers — they can see metadata
-  and (for cloud chats) message content. Only "Secret Chats" are E2E encrypted.
-- You inherit the entire upstream attack surface; pull from upstream regularly.
+---
 
-For a security model that you actually control end-to-end, run your own backend
-(TDLib + Telegram Server, or a different protocol). That is out of scope for
-this repo's current direction.
+## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the full list of planned features.
+
+---
+
+## Contributing
+
+Contributions are welcome and appreciated. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. All contributions must pass `flutter analyze` and the server TypeScript build without warnings.
+
+---
+
+## Security
+
+Found a vulnerability? Please **do not open a public issue**. Instead, email the maintainers directly (contact details in the Security policy). See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model and disclosure process.
+
+---
+
+## License
+
+Chatly is released under the [MIT License](LICENSE). You are free to use, modify, and distribute this software — attribution is appreciated but not required.

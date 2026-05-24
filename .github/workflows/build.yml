@@ -1,0 +1,125 @@
+name: Chatly CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ─── Flutter Analysis ───────────────────────────────────────────────────────
+  flutter_analyze:
+    name: Flutter Analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+
+      - name: Fetch Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Run Flutter analyzer
+        working-directory: apps/mobile
+        run: flutter analyze --no-fatal-infos
+
+  # ─── TypeScript Server Build ─────────────────────────────────────────────────
+  server_build:
+    name: Server TypeScript Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+
+      - name: Install server dependencies
+        working-directory: packages/chatly-server
+        run: npm ci
+
+      - name: Compile TypeScript
+        working-directory: packages/chatly-server
+        run: npm run build
+
+  # ─── Android APK Build ──────────────────────────────────────────────────────
+  build_android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    needs: flutter_analyze
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+
+      - name: Fetch Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Build release APK
+        working-directory: apps/mobile
+        run: |
+          flutter build apk --release \
+            --dart-define=BASE_URL=${{ secrets.PROD_API_URL }} \
+            --dart-define=WS_URL=${{ secrets.PROD_WS_URL }}
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatly-release-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+  # ─── Web Build ──────────────────────────────────────────────────────────────
+  build_web:
+    name: Build Web
+    runs-on: ubuntu-latest
+    needs: flutter_analyze
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+
+      - name: Fetch Flutter dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Build web release
+        working-directory: apps/mobile
+        run: |
+          flutter build web --release \
+            --dart-define=BASE_URL=${{ secrets.PROD_API_URL }} \
+            --dart-define=WS_URL=${{ secrets.PROD_WS_URL }}
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatly-web-build
+          path: apps/mobile/build/web/
+          retention-days: 30

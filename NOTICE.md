@@ -1,48 +1,26 @@
 # NOTICE
 
-Chatly is a derivative work of two upstream open-source projects:
+Chatly is an independent, open-source secure messaging platform. 
 
-## Telegram-Android
-- Upstream: https://github.com/DrKLO/Telegram
-- License: **GPL-2.0-or-later**
-- Copyright © Telegram Messenger Inc. and contributors
+This repository contains the complete source code for:
+1. The cross-platform Flutter mobile, desktop, and web clients.
+2. The Fastify-based Node.js backend relay server.
+3. The FastAPI-based Python ML moderation service.
 
-## Telegram Desktop (TDesktop)
-- Upstream: https://github.com/telegramdesktop/tdesktop
-- License: **GPL-3.0-or-later**
-- Copyright © 2014-2025 The Telegram Desktop Authors
+## Open Source Attribution
 
-In accordance with the GPL:
+Chatly is built using the following third-party libraries and frameworks, for which we express our appreciation:
 
-1. The full source of every binary distributed under the Chatly name is
-   available in this repository, including the unmodified upstream sources
-   (fetched at the refs pinned in `apps/*/upstream.txt`) and our overlay,
-   patches, and build scripts.
-2. Chatly binaries are distributed under the same GPL terms as upstream.
-   See [`LICENSE`](LICENSE).
-3. Upstream copyright notices in source files are preserved as-is.
-4. Modifications introduced by Chatly are recorded as:
-   - `apps/*/overlay/` — files that replace upstream files at build time
-   - `apps/*/patches/` — diffs applied at build time
-   - The Chatly project commit history in this repo
+- **Flutter / Dart** (Google)
+- **Fastify** (Fastify team)
+- **Riverpod** (Remi Rousselet)
+- **Hive NoSQL Database** (Simon Leier)
+- **ioredis** (ioredis contributors)
+- **cryptography** (Dart package contributors)
+- **Detoxify** (Detoxify contributors)
+- **FastAPI** (Tiangolo)
 
-## Trademarks (NOT licensed to us)
+## Trademarks
 
-- "Telegram", the Telegram paper-plane logo, the "TDesktop" name and any
-  associated wordmarks/figurative marks are trademarks of **Telegram FZ-LLC**.
-- Chatly does not use these marks in distributed builds. Our overlay
-  replaces them with Chatly branding.
-- If you fork Chatly, you must replace Chatly's branding too — Chatly
-  branding is not licensed for redistribution under your own product name.
-
-## API credentials
-
-Chatly builds require a Telegram API ID/Hash obtained from
-<https://my.telegram.org>. These credentials are personal to the Chatly
-project owner and are injected as build-time secrets — they are NOT
-committed to this repository.
-
-## Reporting
-
-If you believe Chatly violates a copyright or trademark, open an issue
-or contact the repository owner.
+- "Chatly" and the Chatly logo are proprietary assets of the Chatly open-source project.
+- All other trademarks, product names, logos, or brands are property of their respective owners. Their use does not imply endorsement or affiliation.
