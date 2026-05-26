@@ -1,98 +1,19 @@
-# Deploy Chatly Backend on Render
-
-**Goal**: Enable the `chatly-server` backend to run on Render, providing a live API for login/registration and connecting to a PostgreSQL database.
-
-## User Review Required
-> [!IMPORTANT]
-> The following decisions need your confirmation:
-> - **Render Service Name**: Choose a name for the Render web service (e.g., `chatly-backend`).
-> - **Database Provisioning**: Use Render's managed PostgreSQL add‑on (recommended) or provide an external DB URL.
-> - **Environment Variables**: Verify the values for `JWT_SECRET`, `ALLOWED_ORIGINS`, and other secrets.
-> - **Docker vs. Native Build**: Render can build the Node service directly; a Dockerfile is optional.
-
-## Open Questions
-> [!WARNING]
-> - Do you want to include a custom domain for the Render service? If yes, provide the domain name.
-> - Should the backend be deployed with a Dockerfile for more control, or rely on Render's default Node build?
-
-## Proposed Changes
----
-### [ADD] Render configuration
-#### [NEW] `render.yaml`
-```yaml
 services:
   - type: web
     name: chatly-backend
     env: node
     plan: free
+    rootDir: packages/chatly-server
     buildCommand: npm install && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: JWT_SECRET
-        sync: false   # set in Render UI
+        sync: false
       - key: ALLOWED_ORIGINS
-        sync: false   # set in Render UI (comma‑separated list of allowed client URLs)
+        sync: false
       - key: DATABASE_URL
-        sync: false   # Render will auto‑populate if you add a PostgreSQL add‑on
+        sync: false
     autoDeploy: true
     branch: main
-```
----
-### [ADD] `.env.example`
-Create an example env file (already present but add clearer defaults):
-```env
-# Server configuration
-PORT=5000
-HOST=0.0.0.0
-
-# Security
-JWT_SECRET=change‑me‑to‑a‑strong‑random‑string
-ALLOWED_ORIGINS=https://your‑frontend‑url.com
-
-# Database (Render will provide this when you add a PostgreSQL add‑on)
-# DATABASE_URL=postgresql://user:password@hostname:5432/chatly
-
-# Optional Redis cache (Render also offers Redis)
-# REDIS_URL=redis://redis-host:6379
-```
----
-### [MODIFY] `package.json` scripts
-Add a production start script that runs the compiled JavaScript:
-```json
-"scripts": {
-  "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-  "build": "tsc",
-  "start": "node dist/server.js",
-  "test": "echo \"Error: no test specified\" && exit 1"
-},
-```
----
-### [ADD] CI step (optional)
-If you want GitHub Actions to deploy to Render automatically, add a step using the Render Deploy GitHub Action.
-```yaml
-- name: Deploy to Render
-  uses: render-examples/render-deploy@v1
-  with:
-    apiKey: ${{ secrets.RENDER_API_KEY }}
-    serviceId: ${{ secrets.RENDER_SERVICE_ID }}
-```
-(You would need to store the Render API key and service ID as repository secrets.)
----
-## Verification Plan
-1. **Local Test**: Run `npm install && npm run build && npm start` locally to ensure the server starts without `.env` (it will fallback to defaults or log warnings). Verify endpoints (`/api/auth/*`) work against a local PostgreSQL instance.
-2. **Render Deploy**:
-   - Push the new files to `main`.
-   - Render will automatically create the service and a PostgreSQL add‑on (if selected).
-   - Set the required environment variables in the Render dashboard.
-   - Verify the health endpoint (`https://<service>.onrender.com/`) returns JSON with `status: "running"`.
-   - Test the Flutter app by updating its `BASE_URL` (if it uses one) to the Render URL and confirm login/registration works.
-
----
-**Next Steps**
-- Add the `render.yaml` and `.env.example` files.
-- Update `package.json` scripts.
-- Commit and push the changes.
-- Create the Render web service and PostgreSQL add‑on, then configure the env vars.
-- Run a smoke test from the Flutter app.
