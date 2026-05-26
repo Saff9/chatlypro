@@ -161,7 +161,11 @@ flutter run                    # Connected Android/iOS device
 
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app)
 
-See the full step-by-step guide in [docs/HOSTING.md](docs/HOSTING.md).
+### Quick Deploy to Render
+
+[![Deploy on Render](https://render.com/images/deploy-button.svg)](https://render.com/deploy?repo=https://github.com/Saff9/chatlypro.git)
+
+See the full step‑by‑step guide in [docs/HOSTING.md](docs/HOSTING.md).
 
 ### Build Release APK
 ```bash
