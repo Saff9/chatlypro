@@ -9,7 +9,11 @@ const databaseUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@
 
 export const pool = new Pool({
   connectionString: databaseUrl,
-  ssl: databaseUrl.includes('supabase') ? { rejectUnauthorized: false } : false
+  ssl: databaseUrl.includes('supabase') || databaseUrl.includes('render.com')
+    ? { rejectUnauthorized: false }
+    : false,
+  connectionTimeoutMillis: 3000,  // fail fast after 3 seconds
+  idleTimeoutMillis: 10000,
 });
 
 // Helper to initialize tables
