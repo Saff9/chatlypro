@@ -1,4 +1,8 @@
-name: Chatly Flutter Build
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+  # ... rest of the file unchanged ...
+
 
 on:
   push:
@@ -36,8 +40,8 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: chatly-android-apk
-          path: apps/mobile/build/app/outputs/flutter-apk/app-release.apk
+          name: chatly-android-apks
+          path: apps/mobile/build/app/outputs/flutter-apk/*.apk
 
   build-web:
     name: Build Web App
