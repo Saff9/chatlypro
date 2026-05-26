@@ -121,6 +121,28 @@ export async function initializeDatabase() {
         );
       `);
 
+      // Create Pulse Posts Table (Lucky Pulse anonymous feed)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS pulse_posts (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          author_id UUID REFERENCES users(id) ON DELETE CASCADE,
+          text VARCHAR(200) NOT NULL,
+          topics JSONB DEFAULT '[]',
+          seen_count INT DEFAULT 0,
+          replies_count INT DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // Auto-clean pulse posts older than 7 days (runs on each server start)
+      await client.query(`
+        DELETE FROM pulse_posts WHERE created_at < NOW() - INTERVAL '7 days';
+      `);
+
+      // Ensure bio/mood columns exist on older DBs
+      await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio VARCHAR(100) DEFAULT '';`);
+      await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS mood VARCHAR(50) DEFAULT '🎵 Vibing';`);
+
       console.log('Database schema verified successfully.');
     } catch (err) {
       console.error('Failed to initialize database schema:', err);

@@ -4,6 +4,7 @@ import fastifyCors from '@fastify/cors';
 import dotenv from 'dotenv';
 import { initializeDatabase } from './db';
 import { authRoutes } from './routes/auth';
+import { pulseRoutes, userRoutes } from './routes/social';
 import { handleWebSocketConnection } from './sockets/chat';
 
 // Load environment variables from .env file in development.
@@ -71,6 +72,8 @@ server.register(fastifyWebsocket);
 
 // ─── REST Routes ──────────────────────────────────────────────────────────────
 server.register(authRoutes, { prefix: '/api/auth' });
+server.register(pulseRoutes, { prefix: '/api/pulse' });
+server.register(userRoutes,  { prefix: '/api/users' });
 
 // ─── WebSocket Gateway ────────────────────────────────────────────────────────
 // All real-time messaging flows through this single WS endpoint.
