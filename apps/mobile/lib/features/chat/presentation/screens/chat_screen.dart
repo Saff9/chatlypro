@@ -225,38 +225,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
         _messages.clear();
         _messages.addAll(history);
       });
-      if (history.isEmpty) {
-        final initialHistory = [
-          MessageData(
-            id: 'mock_1',
-            text: 'Hey! How are you?',
-            isMe: false,
-            time: '2:30 PM',
-            isRead: true,
-            timestamp: DateTime.now().subtract(const Duration(minutes: 5)).millisecondsSinceEpoch,
-          ),
-          MessageData(
-            id: 'mock_2',
-            text: "I'm good! Just working on the new Chatly application. What about you?",
-            isMe: true,
-            time: '2:31 PM',
-            isRead: true,
-            timestamp: DateTime.now().subtract(const Duration(minutes: 4)).millisecondsSinceEpoch,
-          ),
-          MessageData(
-            id: 'mock_3',
-            text: 'Same here, did you implement the E2E encryption yet?',
-            isMe: false,
-            time: '2:32 PM',
-            isRead: true,
-            timestamp: DateTime.now().subtract(const Duration(minutes: 3)).millisecondsSinceEpoch,
-          ),
-        ];
-        for (final msg in initialHistory) {
-          await MessageStorageService().saveMessage(widget.chatData.username, msg);
-        }
-        setState(() => _messages.addAll(initialHistory));
-      }
     }
   }
 

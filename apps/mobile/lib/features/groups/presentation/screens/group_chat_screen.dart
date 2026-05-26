@@ -34,7 +34,7 @@ class GroupChatScreen extends ConsumerStatefulWidget {
 }
 
 class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
-  int _membersCount = 16;
+  int _membersCount = 1;
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   final List<GroupChatMessage> _messages = [];
@@ -49,33 +49,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Load mock initial conversation history representing a standard group
-    _messages.addAll([
-      GroupChatMessage(
-        sender: 'Alex Miller',
-        text: 'Hey everyone, welcome to the new project group!',
-        time: DateTime.now().subtract(const Duration(minutes: 10)),
-        isMe: false,
-      ),
-      GroupChatMessage(
-        sender: 'Sarah Connor',
-        text: 'Glad to be here. Did we finalize the core specs yet?',
-        time: DateTime.now().subtract(const Duration(minutes: 8)),
-        isMe: false,
-      ),
-      GroupChatMessage(
-        sender: 'You',
-        text: 'Yes! Backend Fastify is ready and the client P2P discovery is running.',
-        time: DateTime.now().subtract(const Duration(minutes: 5)),
-        isMe: true,
-      ),
-      GroupChatMessage(
-        sender: 'David Brent',
-        text: 'Perfect. Let\'s make sure we build a high-performance design.',
-        time: DateTime.now().subtract(const Duration(minutes: 3)),
-        isMe: false,
-      ),
-    ]);
 
     if (widget.isCampfire && widget.expiresAt != null) {
       _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {

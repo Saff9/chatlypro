@@ -276,11 +276,14 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showCreateGroupDialog(context, theme),
-        backgroundColor: theme.primaryColor,
-        icon: const Icon(Icons.group_add_rounded, color: Colors.white),
-        label: const Text('New Group', style: TextStyle(color: Colors.white)),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 80.0),
+        child: FloatingActionButton.extended(
+          onPressed: () => _showCreateGroupDialog(context, theme),
+          backgroundColor: theme.primaryColor,
+          icon: const Icon(Icons.group_add_rounded, color: Colors.white),
+          label: const Text('New Group', style: TextStyle(color: Colors.white)),
+        ),
       ),
     );
   }

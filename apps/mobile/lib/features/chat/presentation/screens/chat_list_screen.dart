@@ -20,12 +20,13 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   String _searchQuery = '';
   bool _isSearching = false;
 
-  // Real contacts will be loaded from the WebSocket message store and local Hive
-  // cache as users actually communicate. Starting empty is correct behavior.
+  // Real contacts loaded dynamically
   final List<ChatListItemData> _chats = [];
 
-  // Decoy contacts shown in duress mode — populated by the user from settings.
+  // Decoy contacts shown in duress mode
   final List<ChatListItemData> _decoyChats = [];
+
+  StreamSubscription? _socketSubscription;
 
   // Returns a deterministic color for the relationship health ring around the
   // contact avatar. In a future release this will be driven by a real engagement
@@ -64,12 +65,93 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     return false;
   }
 
+  Future<void> _loadChats() async {
+    if (!mounted) return;
+    final connectionState = ref.read(connectionProvider);
+    final acceptedConnections = connectionState.connections;
+    
+    final List<ChatListItemData> loadedChats = [];
+    for (final username in acceptedConnections) {
+      final messages = await MessageStorageService().getMessages(username);
+      final lastMsg = messages.isNotEmpty ? messages.last.text : 'Tap to start conversation.';
+      final lastMsgTime = messages.isNotEmpty ? messages.last.time : '';
+      final unreadCount = messages.where((m) => !m.isMe && !m.isRead).length;
+
+      loadedChats.add(ChatListItemData(
+        name: username.substring(0, 1).toUpperCase() + username.substring(1),
+        username: username,
+        lastMessage: lastMsg,
+        time: lastMsgTime,
+        unreadCount: unreadCount,
+        isOnline: true,
+      ));
+    }
+
+    bool hasChanged = _chats.length != loadedChats.length;
+    if (!hasChanged) {
+      for (int i = 0; i < _chats.length; i++) {
+        if (_chats[i].username != loadedChats[i].username ||
+            _chats[i].lastMessage != loadedChats[i].lastMessage ||
+            _chats[i].unreadCount != loadedChats[i].unreadCount) {
+          hasChanged = true;
+          break;
+        }
+      }
+    }
+
+    if (hasChanged && mounted) {
+      setState(() {
+        _chats.clear();
+        _chats.addAll(loadedChats);
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     P2PMeshService().startP2P();
+    
+    // Load decoy chats
+    _decoyChats.addAll([
+      ChatListItemData(
+        name: 'Sarah Connor',
+        username: 'sarah_c',
+        lastMessage: 'Milk, eggs, and bread. Thanks!',
+        time: '2 min ago',
+        unreadCount: 0,
+        isOnline: true,
+      ),
+      ChatListItemData(
+        name: 'Dad',
+        username: 'dad',
+        lastMessage: 'Perfect, looking forward to it.',
+        time: '45 min ago',
+        unreadCount: 0,
+        isOnline: false,
+      ),
+      ChatListItemData(
+        name: 'Tech Support',
+        username: 'tech_support',
+        lastMessage: 'Great, it is working now. Thank you!',
+        time: '18 hrs ago',
+        unreadCount: 0,
+        isOnline: false,
+      ),
+    ]);
+
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.toLowerCase().trim());
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadChats();
+    });
+
+    _socketSubscription = WebSocketService().messageStream.listen((event) {
+      if (event['type'] == 'message') {
+        _loadChats();
+      }
     });
   }
 
@@ -77,11 +159,18 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   void dispose() {
     P2PMeshService().stopP2P();
     _searchController.dispose();
+    _socketSubscription?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Watch connectionProvider to trigger rebuild when connections change
+    final connectionState = ref.watch(connectionProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadChats();
+    });
+
     final theme = Theme.of(context);
     final densityBox = Hive.box('settings');
     final int density = densityBox.get('chat_tile_density', defaultValue: 5) as int;
@@ -599,12 +688,15 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // Open contact search to start a new chat
-        },
-        backgroundColor: theme.primaryColor,
-        child: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 80.0),
+        child: FloatingActionButton(
+          onPressed: () {
+            _showQRScannerDialog(context);
+          },
+          backgroundColor: theme.primaryColor,
+          child: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white),
+        ),
       ),
     );
   }

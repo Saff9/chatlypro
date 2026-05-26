@@ -7,14 +7,15 @@ dotenv.config();
 // If DATABASE_URL is not provided, we fall back to a mock/in-memory style or local postgres connection.
 const databaseUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/chatly';
 
+const isRemoteDb = !databaseUrl.includes('localhost') && !databaseUrl.includes('127.0.0.1');
+
 export const pool = new Pool({
   connectionString: databaseUrl,
-  ssl: databaseUrl.includes('supabase') || databaseUrl.includes('render.com')
-    ? { rejectUnauthorized: false }
-    : false,
-  connectionTimeoutMillis: 3000,  // fail fast after 3 seconds
+  ssl: isRemoteDb ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 10000,
 });
+
 
 // Helper to initialize tables
 export async function initializeDatabase() {
@@ -150,6 +151,10 @@ export async function initializeDatabase() {
       client.release();
     }
   } catch (err: any) {
+    console.error('Failed to connect to PostgreSQL database:', err.message);
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(`Database connection failed: ${err.message}`);
+    }
     console.warn(
       'Failed to connect to PostgreSQL database:\n' +
       err.message + '\n' +

@@ -153,11 +153,14 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showCreatePulseSheet(context, theme),
-        backgroundColor: const Color(0xFFF59E0B),
-        icon: const Icon(Icons.add_rounded, color: Colors.white),
-        label: const Text('Broadcast Pulse', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 80.0),
+        child: FloatingActionButton.extended(
+          onPressed: () => _showCreatePulseSheet(context, theme),
+          backgroundColor: const Color(0xFFF59E0B),
+          icon: const Icon(Icons.add_rounded, color: Colors.white),
+          label: const Text('Broadcast Pulse', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        ),
       ),
     );
   }
