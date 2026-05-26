@@ -11,6 +11,7 @@ import 'websocket_service.dart';
 import 'message_storage_service.dart';
 import '../features/chat/data/models/message_model.dart';
 import 'auth_service.dart';
+import '../core/config/app_config.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -38,7 +39,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   if (token != null && token != 'offline-dev-token-fallback') {
     // Connect WebSocket temporarily to sync messages in background
-    WebSocketService().connect(url: 'http://localhost:5000', token: token);
+    WebSocketService().connect(url: AppConfig.wsBaseUrl, token: token);
     
     // Maintain connection long enough to fetch offline messages (4 seconds)
     await Future.delayed(const Duration(seconds: 4));
@@ -52,7 +53,7 @@ class PushNotificationService {
   PushNotificationService._internal();
 
   final _dio = Dio(BaseOptions(
-    baseUrl: 'http://localhost:5000/api',
+    baseUrl: AppConfig.apiBaseUrl,
     connectTimeout: const Duration(seconds: 5),
     receiveTimeout: const Duration(seconds: 3),
   ));
@@ -88,7 +89,7 @@ class PushNotificationService {
       // Since app is foreground, we are already connected via WebSocket or should check connection
       final auth = AuthService();
       if (auth.isAuthenticated) {
-        WebSocketService().connect(url: 'http://localhost:5000', token: auth.token!);
+        WebSocketService().connect(url: AppConfig.wsBaseUrl, token: auth.token!);
       }
     });
 

@@ -21,7 +21,7 @@ class AppConfig {
   // ---------------------------------------------------------------------------
   static const String apiBaseUrl = String.fromEnvironment(
     'BASE_URL',
-    defaultValue: 'http://localhost:5000/api',
+    defaultValue: 'https://chatly-backend-nepf.onrender.com/api',
   );
 
   // ---------------------------------------------------------------------------
@@ -31,10 +31,10 @@ class AppConfig {
   static String get wsBaseUrl {
     const base = String.fromEnvironment(
       'WS_URL',
-      defaultValue: 'ws://localhost:5000',
+      defaultValue: 'wss://chatly-backend-nepf.onrender.com',
     );
     // If the user only provided BASE_URL, derive the WS url from it.
-    if (base == 'ws://localhost:5000' && apiBaseUrl != 'http://localhost:5000/api') {
+    if (base == 'wss://chatly-backend-nepf.onrender.com' && apiBaseUrl != 'https://chatly-backend-nepf.onrender.com/api') {
       return apiBaseUrl
           .replaceFirst('https://', 'wss://')
           .replaceFirst('http://', 'ws://')
