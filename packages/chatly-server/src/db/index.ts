@@ -25,6 +25,9 @@ export async function initializeDatabase() {
     try {
       console.log('Initializing database schema...');
       
+      // Ensure pgcrypto extension is enabled for gen_random_uuid()
+      await client.query('CREATE EXTENSION IF NOT EXISTS pgcrypto;');
+
       // Create Users Table
       await client.query(`
         CREATE TABLE IF NOT EXISTS users (

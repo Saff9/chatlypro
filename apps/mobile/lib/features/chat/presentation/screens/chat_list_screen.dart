@@ -7,6 +7,7 @@ import '../../../../services/p2p_mesh_service.dart';
 import 'p2p_chat_screen.dart';
 import '../../../../providers/connection_provider.dart';
 import '../../../../providers/layout_provider.dart';
+import '../../../../services/api_service.dart';
 
 class ChatListScreen extends ConsumerStatefulWidget {
   const ChatListScreen({super.key});
@@ -711,6 +712,8 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
           builder: (context, setState) {
             bool isScanning = true;
             String? scanResult;
+            List<Map<String, dynamic>> searchResults = [];
+            bool isSearchingUsers = false;
 
             void simulateScan(String text) async {
               setState(() {
@@ -805,11 +808,70 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                       controller: usernameController,
                       style: const TextStyle(color: Colors.white),
                       decoration: const InputDecoration(
-                        hintText: 'Or enter username manually...',
+                        hintText: 'Search or enter username manually...',
                         hintStyle: TextStyle(color: Colors.white30),
                         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        suffixIcon: Icon(Icons.search, color: Colors.white30, size: 20),
                       ),
+                      onChanged: (val) async {
+                        final q = val.trim().replaceAll('@', '');
+                        if (q.length >= 2) {
+                          setState(() => isSearchingUsers = true);
+                          final results = await ApiService().searchUsers(q);
+                          setState(() {
+                            searchResults = results;
+                            isSearchingUsers = false;
+                          });
+                        } else {
+                          setState(() {
+                            searchResults = [];
+                          });
+                        }
+                      },
                     ),
+                    if (isSearchingUsers)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8.0),
+                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                      ),
+                    if (searchResults.isNotEmpty)
+                      Container(
+                        maxHeight: 120,
+                        margin: const EdgeInsets.only(top: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.02),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: searchResults.length,
+                          itemBuilder: (context, idx) {
+                            final user = searchResults[idx];
+                            final uName = user['username'] ?? '';
+                            return ListTile(
+                              dense: true,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                              leading: CircleAvatar(
+                                radius: 14,
+                                backgroundColor: const Color(0xFF6366F1).withOpacity(0.2),
+                                child: Text(
+                                  uName.isNotEmpty ? uName[0].toUpperCase() : '?',
+                                  style: const TextStyle(color: Color(0xFF6366F1), fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              title: Text('@$uName', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                              subtitle: Text(user['mood'] ?? '🎵 Vibing', style: const TextStyle(color: Colors.white50, fontSize: 10)),
+                              onTap: () {
+                                usernameController.text = uName;
+                                setState(() {
+                                  searchResults = [];
+                                });
+                              },
+                            );
+                          },
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -825,6 +887,28 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                     if (target != null) {
                       final nav = Navigator.of(context);
                       final messenger = ScaffoldMessenger.of(context);
+                      
+                      // Verify user existence on server first
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text('Verifying username on Chatly network...'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+
+                      final results = await ApiService().searchUsers(target);
+                      final userExists = results.any((u) => u['username'].toString().toLowerCase() == target.toLowerCase());
+
+                      if (!userExists) {
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text('User @$target not found on the network.'),
+                            backgroundColor: const Color(0xFFEF4444),
+                          ),
+                        );
+                        return;
+                      }
+
                       nav.pop();
                       final done = await ref.read(connectionProvider.notifier).sendInvitation(target);
                       if (done) {
