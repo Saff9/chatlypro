@@ -7,7 +7,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-
 
 // ─── In-memory fallback stores ────────────────────────────────────────────────
 const inMemoryPulses: any[] = [];
-const inMemoryUsers: any[] = [];   // shared via import from auth routes
+import { inMemoryUsers } from './auth';
 
 function verifyToken(authHeader?: string): { userId: string; username: string } | null {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;

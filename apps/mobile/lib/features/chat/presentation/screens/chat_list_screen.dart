@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../../../../services/message_storage_service.dart';
+import '../../../../services/websocket_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'chat_screen.dart';
@@ -47,18 +50,16 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   bool _hasMatchingMessages(String username, String query) {
     if (query.isEmpty) return true;
     try {
-      if (!Hive.isBoxOpen('messages')) return false;
-      final box = Hive.box('messages');
-      for (final key in box.keys) {
-        if (key.toString().startsWith('${username}_')) {
-          final val = box.get(key);
-          if (val != null) {
-            final data = jsonDecode(val.toString()) as Map<String, dynamic>;
-            final text = (data['text'] as String? ?? '').toLowerCase();
-            final transcript = (data['voiceTranscript'] as String? ?? '').toLowerCase();
-            if (text.contains(query) || transcript.contains(query)) {
-              return true;
-            }
+      final boxName = 'messages_$username';
+      if (!Hive.isBoxOpen(boxName)) return false;
+      final box = Hive.box(boxName);
+      for (final val in box.values) {
+        if (val != null) {
+          final data = jsonDecode(val.toString()) as Map<String, dynamic>;
+          final text = (data['text'] as String? ?? '').toLowerCase();
+          final transcript = (data['voiceTranscript'] as String? ?? '').toLowerCase();
+          if (text.contains(query) || transcript.contains(query)) {
+            return true;
           }
         }
       }
@@ -167,7 +168,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   @override
   Widget build(BuildContext context) {
     // Watch connectionProvider to trigger rebuild when connections change
-    final connectionState = ref.watch(connectionProvider);
+    ref.watch(connectionProvider);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadChats();
     });
@@ -836,10 +837,10 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                       ),
                     if (searchResults.isNotEmpty)
                       Container(
-                        maxHeight: 120,
+                        constraints: const BoxConstraints(maxHeight: 120),
                         margin: const EdgeInsets.only(top: 8),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.02),
+                          color: Colors.white.withValues(alpha: 0.02),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.white10),
                         ),
@@ -854,14 +855,14 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
                               leading: CircleAvatar(
                                 radius: 14,
-                                backgroundColor: const Color(0xFF6366F1).withOpacity(0.2),
+                                backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.2),
                                 child: Text(
                                   uName.isNotEmpty ? uName[0].toUpperCase() : '?',
                                   style: const TextStyle(color: Color(0xFF6366F1), fontSize: 10, fontWeight: FontWeight.bold),
                                 ),
                               ),
                               title: Text('@$uName', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                              subtitle: Text(user['mood'] ?? '🎵 Vibing', style: const TextStyle(color: Colors.white50, fontSize: 10)),
+                              subtitle: Text(user['mood'] ?? '🎵 Vibing', style: const TextStyle(color: Colors.white54, fontSize: 10)),
                               onTap: () {
                                 usernameController.text = uName;
                                 setState(() {

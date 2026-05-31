@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:hive/hive.dart';
@@ -369,7 +370,7 @@ class AuthService {
   /// SHA-256 hash of the password string for offline verification.
   String _hashPassword(String password) {
     final bytes = utf8.encode(password);
-    final hash = bytes.fold(0, (prev, b) => (prev << 5) - prev + b);
-    return hash.toRadixString(16);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
   }
 }

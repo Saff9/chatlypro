@@ -26,7 +26,7 @@ class _P2PChatScreenState extends State<P2PChatScreen> {
     if (text.isEmpty) return;
 
     _messageController.clear();
-    final success = await P2PMeshService().sendP2PMessage(widget.peer.ipAddress, text);
+    final success = await P2PMeshService().sendP2PMessage(widget.peer, text);
 
     if (!success) {
       if (mounted) {
@@ -148,8 +148,8 @@ class _P2PChatScreenState extends State<P2PChatScreen> {
             // Message Stream
             Expanded(
               child: StreamBuilder<List<P2PMessage>>(
-                stream: P2PMeshService().messageStream,
-                initialData: P2PMeshService().messageHistory,
+                stream: P2PMeshService().getPeerMessagesStream(widget.peer.username),
+                initialData: P2PMeshService().getPeerMessageHistory(widget.peer.username),
                 builder: (context, snapshot) {
                   final messages = snapshot.data ?? [];
                   if (messages.isEmpty) {

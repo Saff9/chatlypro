@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:hive/hive.dart';
 import 'auth_service.dart';
 import 'websocket_service.dart';
@@ -55,20 +56,53 @@ class DeadMansSwitchService {
     // 1. Disconnect WS connection immediately
     WebSocketService().disconnect();
 
-    // 2. Open and completely clear all local Hive boxes
-    final settingsBox = await Hive.openBox('settings');
-    await settingsBox.clear();
+    // 2. WREAK FORENSIC HAVOC: Retrieve list of historical chat usernames to wipe their boxes from disk
+    final List<String> chatsToWipe = [];
+    try {
+      final settingsBox = await Hive.openBox('settings');
+      
+      final storedConns = settingsBox.get('accepted_connections', defaultValue: <String>[]);
+      chatsToWipe.addAll(List<String>.from(storedConns));
 
-    final secureBox = await Hive.openBox('secure_vault');
-    await secureBox.clear();
+      final storedInvites = settingsBox.get('connection_invitations', defaultValue: '[]');
+      final List<dynamic> jsonList = jsonDecode(storedInvites);
+      for (final e in jsonList) {
+        final username = e['username'] as String?;
+        if (username != null && !chatsToWipe.contains(username)) {
+          chatsToWipe.add(username);
+        }
+      }
+    } catch (_) {}
 
-    final outboxBox = await Hive.openBox('outbox');
-    await outboxBox.clear();
+    // Add decoy chats just in case
+    for (final decoy in ['sarah_c', 'dad', 'tech_support']) {
+      if (!chatsToWipe.contains(decoy)) {
+        chatsToWipe.add(decoy);
+      }
+    }
 
-    final messagesBox = await Hive.openBox('messages');
-    await messagesBox.clear();
+    // Completely shred and delete physical box files from disk
+    for (final username in chatsToWipe) {
+      try {
+        await Hive.deleteBoxFromDisk('messages_$username');
+      } catch (_) {}
+    }
 
-    // 3. Reset AuthService local variables
+    // 3. Open and completely clear standard boxes
+    try {
+      final settingsBox = await Hive.openBox('settings');
+      await settingsBox.clear();
+
+      final secureBox = await Hive.openBox('secure_vault');
+      await secureBox.clear();
+
+      final outboxBox = await Hive.openBox('outbox');
+      await outboxBox.clear();
+      
+      await Hive.deleteBoxFromDisk('messages'); // Legacy cleanup
+    } catch (_) {}
+
+    // 4. Reset AuthService local variables
     final authService = AuthService();
     await authService.logout(); // Wipes residual tokens in memory & DB
   }

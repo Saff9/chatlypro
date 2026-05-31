@@ -16,6 +16,8 @@ export interface InMemoryUser {
   avatarColor: string;
   emailVerified: boolean;
   twoFactorEnabled: boolean;
+  bio?: string;
+  mood?: string;
 }
 export const inMemoryUsers: InMemoryUser[] = [];
 export const inMemoryPushTokens = new Map<string, string>();
@@ -119,9 +121,9 @@ export async function authRoutes(fastify: FastifyInstance, options: FastifyPlugi
     try {
       // Attempt PostgreSQL insertion
       const result = await pool.query(
-        `INSERT INTO users (email_hash, email_encrypted, username, avatar_color, email_verified) 
-         VALUES ($1, $2, $3, $4, FALSE) RETURNING id`,
-        [emailHash, email, cleanUsername, avatarColor || '#6366F1']
+        `INSERT INTO users (email_hash, email_encrypted, password_hash, username, avatar_color, email_verified) 
+         VALUES ($1, $2, $3, $4, $5, FALSE) RETURNING id`,
+        [emailHash, email, passwordHash, cleanUsername, avatarColor || '#6366F1']
       );
       
       const newUserId = result.rows[0].id;
@@ -302,6 +304,12 @@ export async function authRoutes(fastify: FastifyInstance, options: FastifyPlugi
       
       if (result.rows.length > 0) {
         const user = result.rows[0];
+
+        // Verify password
+        const isPasswordValid = await bcrypt.compare(password, user.password_hash || '');
+        if (!isPasswordValid) {
+          return reply.code(401).send({ error: 'Invalid email or password' });
+        }
 
         // Check if email is verified
         if (!user.email_verified) {

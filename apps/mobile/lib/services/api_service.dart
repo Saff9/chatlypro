@@ -22,8 +22,6 @@ class ApiService {
     return box.get('jwt_token') as String?;
   }
 
-  Options get _authOptions => Options(headers: {'Authorization': 'Bearer '});
-
   Future<Options> _auth() async {
     final t = await _token();
     return Options(headers: {'Authorization': 'Bearer $t'});

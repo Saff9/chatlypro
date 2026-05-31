@@ -66,14 +66,14 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
   }
 
   // Register socket
-  activeConnections.set(userId, socket);
+  activeConnections.set(username, socket);
   console.log(`User ${username} (${userId}) connected via WebSocket.`);
 
   // Set online status in Redis / Fallback (active flag)
   await redisClient.set(`presence:${userId}`, 'online', 'EX', 30);
 
   // Deliver offline queue immediately
-  await deliverOfflineMessages(userId, socket);
+  await deliverOfflineMessages(username, socket);
 
   // Heartbeat interval to maintain connection status
   const presenceInterval = setInterval(async () => {
@@ -94,12 +94,12 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
           
         case 'message':
           // Relay E2E Ciphertext
-          await relayE2EMessage(userId, message.recipientId, message.ciphertext);
+          await relayE2EMessage(username, message.recipientId, message.ciphertext);
           break;
 
         case 'typing':
           // Relay typing indicator
-          await relayTypingIndicator(userId, message.recipientId, message.isTyping);
+          await relayTypingIndicator(username, message.recipientId, message.isTyping);
           break;
 
         default:
@@ -112,7 +112,7 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
 
   // Socket close / cleanup
   socket.on('close', () => {
-    activeConnections.delete(userId);
+    activeConnections.delete(username);
     clearInterval(presenceInterval);
     redisClient.del(`presence:${userId}`);
     console.log(`User ${username} (${userId}) disconnected.`);
@@ -202,9 +202,14 @@ async function relayE2EMessage(senderId: string, recipientId: string, ciphertext
 
     // Trigger silent push notification
     try {
-      let pushToken = inMemoryPushTokens.get(recipientId);
+      let pushToken: string | undefined;
+      const memoryUser = inMemoryUsers.find(u => u.username === recipientId);
+      if (memoryUser) {
+        pushToken = inMemoryPushTokens.get(memoryUser.id);
+      }
+
       if (!pushToken) {
-        const res = await pool.query('SELECT push_token FROM users WHERE id = $1', [recipientId]);
+        const res = await pool.query('SELECT push_token FROM users WHERE username = $1', [recipientId]);
         if (res.rows.length > 0 && res.rows[0].push_token) {
           pushToken = res.rows[0].push_token;
         }

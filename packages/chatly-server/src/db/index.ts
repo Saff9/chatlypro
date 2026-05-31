@@ -34,6 +34,7 @@ export async function initializeDatabase() {
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           email_hash VARCHAR(255) UNIQUE NOT NULL,
           email_encrypted TEXT NOT NULL,
+          password_hash VARCHAR(255),
           username VARCHAR(50) UNIQUE NOT NULL,
           avatar_color VARCHAR(10) NOT NULL,
           bio VARCHAR(100) DEFAULT '',
@@ -50,6 +51,11 @@ export async function initializeDatabase() {
       // Ensure push_token exists on legacy databases
       await client.query(`
         ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
+      `);
+
+      // Ensure password_hash exists on legacy databases
+      await client.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
       `);
 
       // Ensure email_verified and two_factor_enabled columns exist

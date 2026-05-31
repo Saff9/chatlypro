@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="apps/mobile/assets/images/app_icon.png" alt="Chatly Logo" width="100" height="100" style="border-radius: 22px;" />
+<img src="apps/mobile/assets/images/app_icon_v3.png" alt="Chatly Logo" width="100" height="100" style="border-radius: 22px;" />
 
 # Chatly
 

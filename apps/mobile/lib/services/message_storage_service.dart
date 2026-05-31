@@ -4,8 +4,8 @@ import '../features/chat/data/models/message_model.dart';
 import 'forensic_eraser_service.dart';
 
 // MessageStorageService — Handles reading and writing of per-chat message
-// history to the local encrypted Hive database. Messages are keyed using a
-// composite key: "{chatUsername}_{messageId}" to allow efficient prefix scans.
+// history to local encrypted Hive databases. Messages are saved in chat-specific
+// boxes named "messages_$chatUsername" with "messageId" keys for O(1) lookups.
 class MessageStorageService {
   static final MessageStorageService _instance = MessageStorageService._internal();
   factory MessageStorageService() => _instance;
@@ -14,15 +14,12 @@ class MessageStorageService {
   /// Retrieve all messages for a specific chat username, sorted chronologically.
   Future<List<MessageData>> getMessages(String chatUsername) async {
     try {
-      final box = await Hive.openBox('messages');
+      final box = await Hive.openBox('messages_$chatUsername');
       final messages = <MessageData>[];
-      for (final key in box.keys) {
-        if (key.toString().startsWith('${chatUsername}_')) {
-          final val = box.get(key);
-          if (val != null) {
-            final data = jsonDecode(val.toString()) as Map<String, dynamic>;
-            messages.add(MessageData.fromJson(data));
-          }
+      for (final val in box.values) {
+        if (val != null) {
+          final data = jsonDecode(val.toString()) as Map<String, dynamic>;
+          messages.add(MessageData.fromJson(data));
         }
       }
       messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
@@ -32,12 +29,11 @@ class MessageStorageService {
     }
   }
 
-  /// Persist a message to local storage under its composite key.
+  /// Persist a message to local storage under its specific chat box.
   Future<void> saveMessage(String chatUsername, MessageData message) async {
     try {
-      final box = await Hive.openBox('messages');
-      final key = '${chatUsername}_${message.id}';
-      await box.put(key, jsonEncode(message.toJson()));
+      final box = await Hive.openBox('messages_$chatUsername');
+      await box.put(message.id, jsonEncode(message.toJson()));
     } catch (_) {
       // Fail silently to prevent app crashes on storage exceptions.
     }
@@ -48,12 +44,11 @@ class MessageStorageService {
   /// before removal to prevent recovery by disk-forensic tools.
   Future<void> deleteMessage(String chatUsername, String messageId) async {
     try {
-      final box = await Hive.openBox('messages');
-      final key = '${chatUsername}_$messageId';
-      if (box.containsKey(key)) {
+      final box = await Hive.openBox('messages_$chatUsername');
+      if (box.containsKey(messageId)) {
         final isForensic = ForensicEraserService().isForensicEraserEnabled();
         if (isForensic) {
-          final val = box.get(key);
+          final val = box.get(messageId);
           if (val != null) {
             final data = jsonDecode(val.toString()) as Map<String, dynamic>;
             final originalText = data['text'] as String? ?? '';
@@ -61,20 +56,20 @@ class MessageStorageService {
             // 1. Overwrite in-place with random noise
             final noise = ForensicEraserService().generateRandomNoise(originalText.length);
             data['text'] = noise;
-            await box.put(key, jsonEncode(data));
+            await box.put(messageId, jsonEncode(data));
 
             // 2. Physical disk sync block flush
             await box.flush();
           }
         }
         // 3. Delete key from database
-        await box.delete(key);
+        await box.delete(messageId);
       }
     } catch (_) {
       // Fallback: simple delete without forensic overwrite.
       try {
-        final box = await Hive.openBox('messages');
-        await box.delete('${chatUsername}_$messageId');
+        final box = await Hive.openBox('messages_$chatUsername');
+        await box.delete(messageId);
       } catch (_) {}
     }
   }
@@ -82,7 +77,7 @@ class MessageStorageService {
   /// Enforce the 50-message per-chat limit by scrambling or deleting old messages.
   Future<void> enforceLimit(String chatUsername) async {
     try {
-      final box = await Hive.openBox('messages');
+      final box = await Hive.openBox('messages_$chatUsername');
       final messages = await getMessages(chatUsername);
 
       if (messages.length > 50) {
@@ -91,7 +86,6 @@ class MessageStorageService {
 
         for (int i = 0; i < excessCount; i++) {
           final message = messages[i];
-          final key = '${chatUsername}_${message.id}';
 
           if (isRandomizationEnabled) {
             // Overwrite with random noise to prevent data recovery.
@@ -106,7 +100,7 @@ class MessageStorageService {
               isSent: message.isSent,
               timestamp: message.timestamp,
             );
-            await box.put(key, jsonEncode(scrambledMessage.toJson()));
+            await box.put(message.id, jsonEncode(scrambledMessage.toJson()));
           } else {
             // Active Chat Randomization is disabled: shred and delete physically.
             await deleteMessage(chatUsername, message.id);
@@ -125,9 +119,8 @@ class MessageStorageService {
   /// If the reaction already exists it is removed; otherwise it is incremented.
   Future<void> saveReaction(String chatUsername, String messageId, String reactionKey) async {
     try {
-      final box = await Hive.openBox('messages');
-      final key = '${chatUsername}_$messageId';
-      final val = box.get(key);
+      final box = await Hive.openBox('messages_$chatUsername');
+      final val = box.get(messageId);
       if (val == null) return;
 
       final data = jsonDecode(val.toString()) as Map<String, dynamic>;
@@ -142,7 +135,7 @@ class MessageStorageService {
       }
 
       data['reactions'] = reactions;
-      await box.put(key, jsonEncode(data));
+      await box.put(messageId, jsonEncode(data));
     } catch (_) {}
   }
 
