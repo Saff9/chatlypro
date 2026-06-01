@@ -26,7 +26,7 @@ function sanitizeDatabaseUrl(url: string): string {
     if (lastAtIndex === -1) return cleanedUrl;
     
     const credentials = remainder.substring(0, lastAtIndex);
-    const hostAndDb = remainder.substring(lastAtIndex + 1);
+    let hostAndDb = remainder.substring(lastAtIndex + 1);
     
     const colonIndex = credentials.indexOf(':');
     if (colonIndex === -1) return cleanedUrl;
@@ -34,19 +34,26 @@ function sanitizeDatabaseUrl(url: string): string {
     let username = credentials.substring(0, colonIndex);
     const password = credentials.substring(colonIndex + 1);
     
+    const encodedPassword = password.includes('#') || password.includes('@') 
+      ? encodeURIComponent(password) 
+      : password;
+
     // Check if the host is a Supabase direct connection host
-    const supabaseMatch = hostAndDb.match(/^db\.([a-z0-9]+)\.supabase\.co/i);
+    const supabaseMatch = hostAndDb.match(/^db\.([a-z0-9]+)\.supabase\.co(?::(\d+))?/i);
     if (supabaseMatch) {
       const projectRef = supabaseMatch[1];
+      const region = process.env.SUPABASE_REGION || 'ap-south-1';
+      
+      // Rewrite hostname and port to the transaction connection pooler (port 6543)
+      const pathSuffix = hostAndDb.substring(supabaseMatch[0].length);
+      hostAndDb = `aws-0-${region}.pooler.supabase.com:6543${pathSuffix}`;
+      console.log(`[Database] Rewrote Supabase direct host to IPv4 pooler: aws-0-${region}.pooler.supabase.com:6543`);
+
       if (!username.endsWith(`.${projectRef}`)) {
         username = `${username}.${projectRef}`;
         console.log(`[Database] Appended project reference to username for pooler compatibility: ${username}`);
       }
     }
-
-    const encodedPassword = password.includes('#') || password.includes('@') 
-      ? encodeURIComponent(password) 
-      : password;
 
     return `${protocol}${username}:${encodedPassword}@${hostAndDb}`;
   } catch (e) {
