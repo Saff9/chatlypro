@@ -491,7 +491,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       for (final msg in _messages) {
         final sender = msg.isMe ? 'Me' : widget.chatData.name;
         final typePrefix = msg.isVoice ? '[VOICE MESSAGE - Duration: ${msg.voiceDuration}s] ' : '';
-        final timeStr = msg.time;
+        final timeStr = _formatTime(msg.timestamp);
         
         buffer.writeln('[$timeStr] $sender: $typePrefix${msg.text}');
         if (msg.isVoice && msg.voiceTranscript != null) {
@@ -798,6 +798,67 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
         );
       },
     );
+  }
+
+  String _formatTime(int timestamp) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal();
+    final hour = dt.hour;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+    return '$displayHour:$minute $period';
+  }
+
+  Future<bool> _requestAudioPermission(BuildContext context) async {
+    final completer = Completer<bool>();
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          backgroundColor: const Color(0xFF13131B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Colors.white10),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.mic_rounded, color: theme.primaryColor),
+              const SizedBox(width: 12),
+              const Text('Microphone Permission', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          content: const Text(
+            'Chatly requires access to your microphone to record and send voice notes. Do you want to grant this permission?',
+            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                completer.complete(false);
+              },
+              child: const Text('Deny', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: theme.primaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                Navigator.of(context).pop();
+                completer.complete(true);
+              },
+              child: const Text('Allow'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return completer.future;
   }
 
   void _startVoiceRecording() {
@@ -1736,7 +1797,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                           ),
                         ),
                         Text(
-                          message.time,
+                          _formatTime(message.timestamp),
                           style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 9),
                         ),
                       ],
@@ -1873,7 +1934,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                   const SizedBox(width: 6),
                 ],
                 Text(
-                  message.time,
+                  _formatTime(message.timestamp),
                   style: TextStyle(
                     color: isMe ? Colors.white60 : Colors.black45,
                     fontSize: 9,
@@ -1989,11 +2050,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               _isRecordingVoice ? Icons.mic_rounded : Icons.mic_none_rounded,
               color: _isRecordingVoice ? Colors.redAccent : theme.primaryColor,
             ),
-            onPressed: () {
+            onPressed: () async {
               if (_isRecordingVoice) {
                 _stopVoiceRecordingAndSend();
               } else {
-                _startVoiceRecording();
+                final granted = await _requestAudioPermission(context);
+                if (granted && mounted) {
+                  _startVoiceRecording();
+                }
               }
             },
           ),

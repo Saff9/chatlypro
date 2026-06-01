@@ -154,7 +154,7 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                     ),
                   )
                 : ListView.separated(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.only(top: 8, bottom: 100),
               itemCount: _groups.length,
               separatorBuilder: (context, index) => const Divider(height: 1, indent: 80),
               itemBuilder: (context, index) {

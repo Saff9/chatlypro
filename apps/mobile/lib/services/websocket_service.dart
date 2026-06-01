@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
@@ -64,10 +65,15 @@ class WebSocketService {
     }
 
     _updateState(SocketConnectionState.connecting);
-    final wsUri = Uri.parse('$url/ws/chat?token=$token');
+    final wsUri = Uri.parse('$url/ws/chat');
 
     try {
-      _channel = WebSocketChannel.connect(wsUri);
+      _channel = IOWebSocketChannel.connect(
+        wsUri,
+        headers: {
+          'Authorization': 'Bearer $token',
+        },
+      );
       
       _channel!.stream.listen(
         (message) {

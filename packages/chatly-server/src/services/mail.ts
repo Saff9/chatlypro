@@ -9,6 +9,7 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
   const port = parseInt(process.env.SMTP_PORT || '587', 10);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
+  const isProduction = (process.env.NODE_ENV || 'development') === 'production';
 
   if (host && user && pass) {
     console.log('Using configured custom SMTP server:', host);
@@ -18,6 +19,15 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
       secure: port === 465,
       auth: { user, pass }
     });
+  } else if (isProduction) {
+    console.error('[FATAL] Missing custom SMTP configurations in production environment. Dynamic Ethereal mail is disabled for security.');
+    // In production with missing SMTP, use a silent secure mock transporter to prevent OTP leaks
+    transporter = {
+      sendMail: async (mailOptions: any) => {
+        console.warn(`[SECURITY WARNING] Attempted to send email to ${mailOptions.to.replace(/(?<=.{2}).(?=[^@]*?@)/g, '*')} but SMTP is unconfigured in production.`);
+        return { messageId: 'unconfigured-smtp-production-id' };
+      }
+    } as any;
   } else {
     console.log('No SMTP configurations found. Initializing a free dynamic Ethereal test account...');
     try {
@@ -34,7 +44,7 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
       });
     } catch (err: any) {
       console.error('Failed to register Ethereal Mail test credentials. Emulating transporter via console output: ', err.message);
-      // Failback transporter printing directly to stdout
+      // Fallback transporter printing directly to stdout
       transporter = {
         sendMail: async (mailOptions: any) => {
           console.log('\n--- [EMULATED MAIL SERVICE] ---');
@@ -54,34 +64,43 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
 export async function sendEmail({ to, subject, text, html }: { to: string; subject: string; text: string; html?: string }) {
   try {
     const transport = await getTransporter();
+    const isProduction = (process.env.NODE_ENV || 'development') === 'production';
     
     // Print verification/security codes to console immediately for convenience during development/testing
-    console.log('\n--- [OUTGOING SECURITY EMAIL] ---');
-    console.log(`To: ${to}`);
-    console.log(`Subject: ${subject}`);
-    console.log(`Body: ${text}`);
-    console.log('---------------------------------\n');
+    if (!isProduction) {
+      console.log('\n--- [OUTGOING SECURITY EMAIL] ---');
+      console.log(`To: ${to}`);
+      console.log(`Subject: ${subject}`);
+      console.log(`Body: ${text}`);
+      console.log('---------------------------------\n');
+    } else {
+      // Mask email for production logs to protect user PII
+      const maskedEmail = to.replace(/(?<=.{2}).(?=[^@]*?@)/g, '*');
+      console.log(`[AUDIT] Dispatching security email to: ${maskedEmail}`);
+    }
 
-    // Run the actual sendMail in the background asynchronously to prevent blocking the HTTP response
-    transport.sendMail({
+    // Run the actual sendMail and await its completion to avoid silently failing background tasks
+    const info = await transport.sendMail({
       from: '"Chatly Security" <security@chatly.secure>',
       to,
       subject,
       text,
       html
-    }).then(info => {
-      console.log(`Email dispatched successfully to ${to}. Message ID: ${info.messageId}`);
+    });
+
+    console.log(`Email dispatched successfully to ${to}. Message ID: ${info.messageId}`);
+    
+    if (!isProduction) {
       const previewUrl = nodemailer.getTestMessageUrl(info);
       if (previewUrl) {
         console.log(`\n📬 [TESTING MODE] Read your verification code at Ethereal URL: ${previewUrl}\n`);
       }
-    }).catch(err => {
-      console.error('Failed to send email in background:', err.message);
-    });
+    }
 
     return true;
   } catch (err: any) {
-    console.error('Failed to initialize transporter for email:', err.message);
+    console.error('Failed to send email:', err.message);
     return false;
   }
 }
+

@@ -6,12 +6,17 @@ const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 // In-memory warnings map for fast throttling & auto-bans
 const userWarningTracker = new Map<string, { warnings: number; lastWarningAt: number }>();
 
-/**
- * Sanitizes input string to prevent script/markup injection
- */
 export function sanitizeMessage(input: string): string {
-  // Remove basic HTML tag structures
-  return input.replace(/[<>{}]/g, '').trim();
+  if (!input) return '';
+  // Convert standard HTML characters to safe HTML entities to prevent XSS
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;')
+    .trim();
 }
 
 /**
@@ -30,8 +35,12 @@ export async function checkAndModerateUserMessage(userId: string, plaintext: str
   try {
     const response = await fetch(`${ML_SERVICE_URL}/analyse`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: sanitized })
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-API-Key': process.env.API_KEY || ''
+      },
+      body: JSON.stringify({ text: sanitized }),
+      signal: AbortSignal.timeout(3000)
     });
 
     if (response.ok) {

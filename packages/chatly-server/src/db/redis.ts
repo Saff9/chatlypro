@@ -34,7 +34,11 @@ class MemoryFallback {
   }
 
   async keys(pattern: string): Promise<string[]> {
-    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+    // Escape regex control characters except '*' which is translated to '.*'
+    const escapedPattern = pattern
+      .replace(/[-\/\\^$+?.()|[\]{}]/g, '\\$&')
+      .replace(/\*/g, '.*');
+    const regex = new RegExp('^' + escapedPattern + '$');
     const matches: string[] = [];
     const now = Date.now();
     for (const [key, item] of this.store.entries()) {
@@ -66,4 +70,23 @@ if (redisUrl) {
   redisClient = new MemoryFallback();
 }
 
-export { redisClient };
+/**
+ * Scan keys in a non-blocking manner using SCAN for Redis or the local MemoryFallback keys method.
+ */
+export async function scanKeys(pattern: string): Promise<string[]> {
+  if (redisClient instanceof Redis) {
+    const keys: string[] = [];
+    let cursor = '0';
+    do {
+      const reply = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = reply[0];
+      keys.push(...reply[1]);
+    } while (cursor !== '0');
+    return keys;
+  } else {
+    return (redisClient as MemoryFallback).keys(pattern);
+  }
+}
+
+export { redisClient, MemoryFallback };
+

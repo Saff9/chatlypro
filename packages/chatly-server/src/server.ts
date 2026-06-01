@@ -32,7 +32,7 @@ if (JWT_SECRET.length < 32) {
 // by setting ALLOWED_ORIGINS in your environment (comma-separated list).
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-  : true; // true = allow any origin (development fallback)
+  : (process.env.NODE_ENV === 'production' ? false : true);
 
 // ─── Server Initialization ────────────────────────────────────────────────────
 const server = fastify({

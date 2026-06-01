@@ -3,15 +3,43 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Pool configuration
-// If DATABASE_URL is not provided, we fall back to a mock/in-memory style or local postgres connection.
-const databaseUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/chatly';
+function sanitizeDatabaseUrl(url: string): string {
+  try {
+    const doubleSlashIndex = url.indexOf('://');
+    if (doubleSlashIndex === -1) return url;
+    
+    const protocol = url.substring(0, doubleSlashIndex + 3);
+    const remainder = url.substring(doubleSlashIndex + 3);
+    
+    const lastAtIndex = remainder.lastIndexOf('@');
+    if (lastAtIndex === -1) return url;
+    
+    const credentials = remainder.substring(0, lastAtIndex);
+    const hostAndDb = remainder.substring(lastAtIndex + 1);
+    
+    const colonIndex = credentials.indexOf(':');
+    if (colonIndex === -1) return url;
+    
+    const username = credentials.substring(0, colonIndex);
+    const password = credentials.substring(colonIndex + 1);
+    
+    if (password.includes('#') || password.includes('@')) {
+      return `${protocol}${username}:${encodeURIComponent(password)}@${hostAndDb}`;
+    }
+  } catch (e) {
+    console.error('Error sanitizing database URL:', e);
+  }
+  return url;
+}
+
+const rawDatabaseUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/chatly';
+const databaseUrl = sanitizeDatabaseUrl(rawDatabaseUrl);
 
 const isRemoteDb = !databaseUrl.includes('localhost') && !databaseUrl.includes('127.0.0.1');
 
 export const pool = new Pool({
   connectionString: databaseUrl,
-  ssl: isRemoteDb ? { rejectUnauthorized: false } : false,
+  ssl: isRemoteDb ? { rejectUnauthorized: true } : false,
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 10000,
 });

@@ -4,6 +4,12 @@ import crypto from 'crypto';
 import { pool } from '../db';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-prod';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+if (NODE_ENV === 'production' && JWT_SECRET === 'chatly-super-secret-key-change-in-prod') {
+  console.error('[FATAL] JWT_SECRET must be set to a strong random value in production. Refusing to start.');
+  process.exit(1);
+}
 
 // ─── In-memory fallback stores ────────────────────────────────────────────────
 const inMemoryPulses: any[] = [];
@@ -151,9 +157,15 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const { bio, mood, avatarColor, displayName } = request.body as any;
+    const { bio, mood, avatarColor } = request.body as any;
 
     try {
+      // Verify user exists in the database
+      const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [user.userId]);
+      if (userCheck.rows.length === 0) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+
       const updates: string[] = [];
       const values: any[] = [];
       let idx = 1;
@@ -163,6 +175,15 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
       if (avatarColor !== undefined) { updates.push(`avatar_color = $${idx++}`); values.push(avatarColor); }
 
       if (updates.length === 0) return reply.code(400).send({ error: 'No fields to update' });
+
+      // Whitelist columns to prevent SQL injection
+      const ALLOWED_COLUMNS = ['bio', 'mood', 'avatar_color'];
+      for (const update of updates) {
+        const col = update.split('=')[0].trim();
+        if (!ALLOWED_COLUMNS.includes(col)) {
+          return reply.code(400).send({ error: 'Invalid update field' });
+        }
+      }
 
       values.push(user.userId);
       await pool.query(
@@ -176,8 +197,9 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
         if (bio !== undefined) u.bio = bio;
         if (mood !== undefined) u.mood = mood;
         if (avatarColor !== undefined) u.avatarColor = avatarColor;
+        return reply.send({ success: true, note: 'Saved in memory fallback' });
       }
-      return reply.send({ success: true, note: 'Saved in memory fallback' });
+      return reply.code(404).send({ error: 'User not found' });
     }
   });
 }

@@ -282,8 +282,11 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
             ),
             IconButton(
               icon: const Icon(Icons.qr_code_scanner_rounded),
-              onPressed: () {
-                _showQRScannerDialog(context);
+              onPressed: () async {
+                final granted = await _requestCameraPermission(context);
+                if (granted && context.mounted) {
+                  _showQRScannerDialog(context);
+                }
               },
             ),
             IconButton(
@@ -553,7 +556,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
               }
 
               return ListView.builder(
-                padding: const EdgeInsets.only(top: 8.0, bottom: 20.0),
+                padding: const EdgeInsets.only(top: 8.0, bottom: 100.0),
                 itemCount: filtered.length,
                 itemBuilder: (context, index) {
                   final chat = filtered[index];
@@ -693,14 +696,69 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 80.0),
         child: FloatingActionButton(
-          onPressed: () {
-            _showQRScannerDialog(context);
+          onPressed: () async {
+            final granted = await _requestCameraPermission(context);
+            if (granted && context.mounted) {
+              _showQRScannerDialog(context);
+            }
           },
           backgroundColor: theme.primaryColor,
           child: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white),
         ),
       ),
     );
+  }
+
+  Future<bool> _requestCameraPermission(BuildContext context) async {
+    final completer = Completer<bool>();
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          backgroundColor: const Color(0xFF13131B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Colors.white10),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.camera_alt_rounded, color: theme.primaryColor),
+              const SizedBox(width: 12),
+              const Text('Camera Permission', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            ],
+          ),
+          content: const Text(
+            'Chatly requires access to your camera to scan E2E pairing QR codes. Do you want to grant this permission?',
+            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                completer.complete(false);
+              },
+              child: const Text('Deny', style: TextStyle(color: Colors.white54)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: theme.primaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                Navigator.of(context).pop();
+                completer.complete(true);
+              },
+              child: const Text('Allow'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return completer.future;
   }
 
   void _showQRScannerDialog(BuildContext context) {

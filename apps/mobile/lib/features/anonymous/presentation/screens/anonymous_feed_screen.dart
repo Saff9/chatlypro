@@ -10,6 +10,7 @@ class AnonymousFeedScreen extends StatefulWidget {
 
 class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
   final List<PulseItemData> _pulses = [];
+  final Set<String> _seenPulseIds = {};
   bool _loading = true;
 
   @override
@@ -82,7 +83,7 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Anonymous Pulse Feed',
+                           'Anonymous Pulse Feed',
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         const SizedBox(height: 2),
@@ -140,12 +141,15 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
                     : RefreshIndicator(
                         onRefresh: _loadPulses,
                         child: ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 100),
                           itemCount: _pulses.length,
                           itemBuilder: (context, index) {
                             final pulse = _pulses[index];
-                            // Mark as seen
-                            ApiService().markPulseSeen(pulse.id);
+                            // Mark as seen once per app session to avoid storming the API
+                            if (!_seenPulseIds.contains(pulse.id)) {
+                              _seenPulseIds.add(pulse.id);
+                              ApiService().markPulseSeen(pulse.id);
+                            }
                             return _buildPulseCard(pulse, theme);
                           },
                         ),

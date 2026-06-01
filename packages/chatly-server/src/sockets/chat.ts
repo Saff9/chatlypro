@@ -1,11 +1,17 @@
 import { WebSocket } from 'ws';
 import jwt from 'jsonwebtoken';
-import { redisClient } from '../db/redis';
+import { redisClient, scanKeys } from '../db/redis';
 import { pool } from '../db';
 import { sendSilentPush } from '../services/push';
 import { inMemoryPushTokens, inMemoryUsers } from '../routes/auth';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-prod';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+if (NODE_ENV === 'production' && JWT_SECRET === 'chatly-super-secret-key-change-in-prod') {
+  console.error('[FATAL] JWT_SECRET must be set to a strong random value in production. Refusing to start.');
+  process.exit(1);
+}
 
 // Active sockets map
 const activeConnections = new Map<string, WebSocket>();
@@ -20,10 +26,27 @@ interface TempMessage {
 }
 const inMemoryOfflineQueue: TempMessage[] = [];
 
+// Cleanup memory offline queue every 10 minutes to prevent memory leaks
+setInterval(() => {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000; // 24 hours
+  let i = inMemoryOfflineQueue.length;
+  while (i--) {
+    if (inMemoryOfflineQueue[i].timestamp < cutoff) {
+      inMemoryOfflineQueue.splice(i, 1);
+    }
+  }
+}, 600000);
+
 export async function handleWebSocketConnection(socket: WebSocket, req: any) {
-  // Extract token from query params: /ws/chat?token=XYZ
-  const url = new URL(req.url, 'http://localhost');
-  const token = url.searchParams.get('token');
+  // Extract token from Authorization header or fallback to query params
+  const authHeader = req.headers['authorization'];
+  let token: string | null = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else {
+    const url = new URL(req.url, 'http://localhost');
+    token = url.searchParams.get('token');
+  }
 
   if (!token) {
     socket.close(4001, 'Unauthorized: Missing token');
@@ -65,7 +88,11 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
     return;
   }
 
-  // Register socket
+  // Register socket (close old connection for this user if exists to prevent duplicate connection DOS)
+  const existingSocket = activeConnections.get(username);
+  if (existingSocket) {
+    existingSocket.close(4009, 'New connection established elsewhere');
+  }
   activeConnections.set(username, socket);
   console.log(`User ${username} (${userId}) connected via WebSocket.`);
 
@@ -82,8 +109,31 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
     }
   }, 15000);
 
+  let messageCount = 0;
+  let resetTime = Date.now() + 60000;
+
   // Listen to messages
   socket.on('message', async (data) => {
+    // 64KB Max Message Size check to prevent payload size DOS
+    if (data.toString().length > 65536) {
+      console.warn(`WebSocket message size exceeded limit from user ${username}`);
+      socket.close(1009, 'Message too big');
+      return;
+    }
+
+    // Rate Limiting: max 120 messages per minute
+    const now = Date.now();
+    if (now > resetTime) {
+      messageCount = 0;
+      resetTime = now + 60000;
+    }
+    messageCount++;
+    if (messageCount > 120) {
+      console.warn(`WebSocket rate limit exceeded for user ${username}`);
+      socket.close(1008, 'Rate limit exceeded');
+      return;
+    }
+
     try {
       const message = JSON.parse(data.toString());
       
@@ -126,8 +176,8 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
 // Deliver offline messages cached in Redis / Memory
 async function deliverOfflineMessages(recipientId: string, socket: WebSocket) {
   try {
-    // 1. Check Redis keys
-    const keys = await redisClient.keys(`msg:${recipientId}:*`);
+    // 1. Check Redis keys in a non-blocking way
+    const keys = await scanKeys(`msg:${recipientId}:*`);
     if (keys.length > 0) {
       console.log(`Delivering ${keys.length} offline messages to ${recipientId} via Redis...`);
       for (const key of keys) {
@@ -189,15 +239,20 @@ async function relayE2EMessage(senderId: string, recipientId: string, ciphertext
       );
       console.log(`Saved offline message to Redis for ${recipientId} (TTL: 24h).`);
     } catch (err) {
-      // In-Memory cache fallback
-      inMemoryOfflineQueue.push({
-        id: msgId,
-        senderId,
-        recipientId,
-        ciphertext,
-        timestamp: payload.timestamp
-      });
-      console.log(`Saved offline message to Memory fallback for ${recipientId} (TTL: 24h simulated).`);
+      // In-Memory cache fallback: Cap at 100 messages per recipient to prevent memory leaks/DoS
+      const recipientCount = inMemoryOfflineQueue.filter(m => m.recipientId === recipientId).length;
+      if (recipientCount < 100) {
+        inMemoryOfflineQueue.push({
+          id: msgId,
+          senderId,
+          recipientId,
+          ciphertext,
+          timestamp: payload.timestamp
+        });
+        console.log(`Saved offline message to Memory fallback for ${recipientId} (TTL: 24h simulated).`);
+      } else {
+        console.warn(`In-memory offline queue for ${recipientId} reached capacity limit (100). Dropping message.`);
+      }
     }
 
     // Trigger silent push notification
