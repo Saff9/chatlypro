@@ -1,5 +1,7 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
@@ -37,9 +39,32 @@ const databaseUrl = sanitizeDatabaseUrl(rawDatabaseUrl);
 
 const isRemoteDb = !databaseUrl.includes('localhost') && !databaseUrl.includes('127.0.0.1');
 
+let sslConfig: any = false;
+if (isRemoteDb) {
+  sslConfig = {
+    rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true',
+  };
+  const caCertPath = process.env.DB_SSL_CA_PATH || './supabase-ca.crt';
+  try {
+    if (fs.existsSync(caCertPath)) {
+      sslConfig.ca = fs.readFileSync(caCertPath).toString();
+      sslConfig.rejectUnauthorized = true;
+      console.log(`[Database] Loaded SSL CA certificate from ${caCertPath}. Enforcing rejectUnauthorized: true.`);
+    } else {
+      console.warn(
+        `[Database] [WARN] SSL CA certificate not found at ${caCertPath}.\n` +
+        `Connecting to remote PostgreSQL database with rejectUnauthorized: false.\n` +
+        `This is vulnerable to MITM attacks. Please provide a valid CA certificate in production.`
+      );
+    }
+  } catch (e: any) {
+    console.error(`[Database] Error loading SSL CA certificate: ${e.message}`);
+  }
+}
+
 export const pool = new Pool({
   connectionString: databaseUrl,
-  ssl: isRemoteDb ? { rejectUnauthorized: true } : false,
+  ssl: sslConfig,
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 10000,
   // Force IPv4 lookup and connection to bypass IPv6 ENETUNREACH bugs in cloud platforms
