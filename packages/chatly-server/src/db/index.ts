@@ -44,7 +44,9 @@ export const pool = new Pool({
   ssl: isRemoteDb ? { rejectUnauthorized: true } : false,
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 10000,
-});
+  // Force IPv4 lookup and connection to bypass IPv6 ENETUNREACH bugs in cloud platforms
+  family: 4,
+} as any);
 
 
 // Helper to initialize tables
