@@ -1,8 +1,6 @@
 import { Pool } from 'pg';
-import dns from 'dns';
 import dotenv from 'dotenv';
 
-dns.setDefaultResultOrder('ipv4first');
 dotenv.config();
 
 function sanitizeDatabaseUrl(url: string): string {

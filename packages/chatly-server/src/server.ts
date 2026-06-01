@@ -1,3 +1,4 @@
+import './dns-bypass';
 import fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
