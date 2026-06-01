@@ -7,20 +7,29 @@ dotenv.config();
 
 function sanitizeDatabaseUrl(url: string): string {
   try {
-    const doubleSlashIndex = url.indexOf('://');
-    if (doubleSlashIndex === -1) return url;
+    let cleanedUrl = url;
     
-    const protocol = url.substring(0, doubleSlashIndex + 3);
-    const remainder = url.substring(doubleSlashIndex + 3);
+    // Remove sslmode/ssl query parameters to prevent pg from overriding our programmatically configured SSL settings
+    cleanedUrl = cleanedUrl.replace(/([?&])sslmode=[^&]*/gi, '');
+    cleanedUrl = cleanedUrl.replace(/([?&])ssl=[^&]*/gi, '');
+    
+    // Fix dangling ? or & at the end of the URL
+    cleanedUrl = cleanedUrl.replace(/\?&/g, '?').replace(/\?$/g, '').replace(/&$/g, '');
+
+    const doubleSlashIndex = cleanedUrl.indexOf('://');
+    if (doubleSlashIndex === -1) return cleanedUrl;
+    
+    const protocol = cleanedUrl.substring(0, doubleSlashIndex + 3);
+    const remainder = cleanedUrl.substring(doubleSlashIndex + 3);
     
     const lastAtIndex = remainder.lastIndexOf('@');
-    if (lastAtIndex === -1) return url;
+    if (lastAtIndex === -1) return cleanedUrl;
     
     const credentials = remainder.substring(0, lastAtIndex);
     const hostAndDb = remainder.substring(lastAtIndex + 1);
     
     const colonIndex = credentials.indexOf(':');
-    if (colonIndex === -1) return url;
+    if (colonIndex === -1) return cleanedUrl;
     
     const username = credentials.substring(0, colonIndex);
     const password = credentials.substring(colonIndex + 1);
@@ -28,6 +37,7 @@ function sanitizeDatabaseUrl(url: string): string {
     if (password.includes('#') || password.includes('@')) {
       return `${protocol}${username}:${encodeURIComponent(password)}@${hostAndDb}`;
     }
+    return `${protocol}${credentials}@${hostAndDb}`;
   } catch (e) {
     console.error('Error sanitizing database URL:', e);
   }
