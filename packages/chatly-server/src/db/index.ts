@@ -31,13 +31,24 @@ function sanitizeDatabaseUrl(url: string): string {
     const colonIndex = credentials.indexOf(':');
     if (colonIndex === -1) return cleanedUrl;
     
-    const username = credentials.substring(0, colonIndex);
+    let username = credentials.substring(0, colonIndex);
     const password = credentials.substring(colonIndex + 1);
     
-    if (password.includes('#') || password.includes('@')) {
-      return `${protocol}${username}:${encodeURIComponent(password)}@${hostAndDb}`;
+    // Check if the host is a Supabase direct connection host
+    const supabaseMatch = hostAndDb.match(/^db\.([a-z0-9]+)\.supabase\.co/i);
+    if (supabaseMatch) {
+      const projectRef = supabaseMatch[1];
+      if (!username.endsWith(`.${projectRef}`)) {
+        username = `${username}.${projectRef}`;
+        console.log(`[Database] Appended project reference to username for pooler compatibility: ${username}`);
+      }
     }
-    return `${protocol}${credentials}@${hostAndDb}`;
+
+    const encodedPassword = password.includes('#') || password.includes('@') 
+      ? encodeURIComponent(password) 
+      : password;
+
+    return `${protocol}${username}:${encodedPassword}@${hostAndDb}`;
   } catch (e) {
     console.error('Error sanitizing database URL:', e);
   }
