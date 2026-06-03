@@ -100,13 +100,22 @@ const PORT = parseInt(process.env.PORT || '5000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
 async function bootstrap() {
+  // Start the HTTP server first so Render's health check passes immediately.
+  // Then initialize the database - if it fails we log but do NOT crash.
   try {
-    await initializeDatabase();
     await server.listen({ port: PORT, host: HOST });
     server.log.info(`Chatly Secure Backend running on port ${PORT} [${NODE_ENV}]`);
   } catch (err) {
-    server.log.error(err);
+    server.log.error(err, '[FATAL] Failed to start HTTP server');
     process.exit(1);
+  }
+
+  // DB init runs after server is up - failures are non-fatal
+  try {
+    await initializeDatabase();
+  } catch (err: any) {
+    // initializeDatabase does not throw, but guard anyway
+    server.log.error(`[Database] Initialization error (server still running): ${err?.message}`);
   }
 }
 
