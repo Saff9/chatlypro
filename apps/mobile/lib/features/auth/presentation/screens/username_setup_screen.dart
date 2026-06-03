@@ -1,7 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
+import 'package:dio/dio.dart';
+import '../../../../core/config/app_config.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
 import '../../../../navigation/main_navigation.dart';
+import '../../../../services/auth_service.dart';
+import '../../../../services/api_service.dart';
 
 // UsernameSetupScreen — Shown after a successful email verification to let the
 // user choose a unique, permanent username. Usernames are alphanumeric, 3–20
@@ -18,6 +23,7 @@ class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
   bool _isChecking = false;
   bool? _isAvailable;
   String _errorMessage = '';
+  Timer? _debounceTimer;
 
   // Words that are either reserved system identifiers or could cause confusion.
   static const _reservedWords = {
@@ -60,18 +66,29 @@ class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
 
     setState(() => _isChecking = true);
 
-    // Debounced local check — in a future release this will hit the server
-    // to verify global uniqueness. For now, the server will enforce
-    // uniqueness at the point of account creation.
-    Future.delayed(const Duration(milliseconds: 600), () {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 600), () async {
       if (!mounted) return;
       if (_usernameController.text.trim().toLowerCase() != trimmed) return;
 
-      setState(() {
-        _isChecking = false;
-        _isAvailable = true;
-        _errorMessage = '';
-      });
+      try {
+        final available = await AuthService().isUsernameAvailable(trimmed);
+        if (!mounted) return;
+        if (_usernameController.text.trim().toLowerCase() != trimmed) return;
+
+        setState(() {
+          _isChecking = false;
+          _isAvailable = available;
+          _errorMessage = available ? '' : 'Username is already taken';
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _isChecking = false;
+          _isAvailable = false;
+          _errorMessage = 'Error checking availability';
+        });
+      }
     });
   }
 
@@ -79,19 +96,38 @@ class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
     if (_isAvailable != true) return;
 
     final username = _usernameController.text.trim().toLowerCase();
-    final box = Hive.box('settings');
-    await box.put('username', username);
-    await box.put('display_name', username);
+    
+    setState(() {
+      _isChecking = true;
+    });
 
-    if (mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainNavigation()),
+    final success = await ApiService().updateProfile(username: username);
+
+    if (!mounted) return;
+    setState(() {
+      _isChecking = false;
+    });
+
+    if (success) {
+      final box = Hive.box('settings');
+      await box.put('username', username);
+      await box.put('display_name', username);
+
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const MainNavigation()),
+        );
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to update username on server. Please try again.')),
       );
     }
   }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _usernameController.dispose();
     super.dispose();
   }

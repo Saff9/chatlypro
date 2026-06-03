@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
+import '../../../../navigation/main_navigation.dart';
 import 'signup_screen.dart';
-import 'username_setup_screen.dart';
 import 'forgot_password_screen.dart';
 import 'email_verification_screen.dart';
 import 'two_factor_screen.dart';
+import 'username_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -60,9 +62,27 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             );
           } else {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => const UsernameSetupScreen()),
-            );
+            // Login success — check if username exists
+            final username = AuthService().username;
+            if (username != null && username.isNotEmpty) {
+              final box = Hive.box('settings');
+              await box.put('username', username);
+              await box.put('display_name', username);
+              
+              if (mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (context) => const MainNavigation()),
+                  (route) => false,
+                );
+              }
+            } else {
+              if (mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (context) => const UsernameSetupScreen()),
+                  (route) => false,
+                );
+              }
+            }
           }
         } else {
           if (result.emailVerified == false) {
@@ -412,138 +432,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ),
                             
-                            const SizedBox(height: 24),
-                            // OR Divider
-                            Row(
-                              children: [
-                                Expanded(child: Divider(color: Colors.white.withValues(alpha: 0.08))),
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16),
-                                  child: Text(
-                                    'OR CONNECT WITH',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: Color(0xFF908FA0),
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 1.0,
-                                    ),
-                                  ),
-                                ),
-                                Expanded(child: Divider(color: Colors.white.withValues(alpha: 0.08))),
-                              ],
-                            ),
-                            const SizedBox(height: 20),
-                            
-                            // Social Connection Grid
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: GlassmorphicContainer(
-                                    height: 50,
-                                    borderRadius: 14,
-                                    blur: 10,
-                                    backgroundOpacity: 0.05,
-                                    borderOpacity: 0.1,
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(14),
-                                      onTap: () {},
-                                      child: const Row(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Icon(Icons.g_mobiledata_rounded, color: Color(0xFF8083FF), size: 30),
-                                          SizedBox(width: 4),
-                                          Text(
-                                            'Google',
-                                            style: TextStyle(
-                                              fontSize: 14, 
-                                              fontWeight: FontWeight.w600,
-                                              color: Color(0xFFE4E1ED),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: GlassmorphicContainer(
-                                    height: 50,
-                                    borderRadius: 14,
-                                    blur: 10,
-                                    backgroundOpacity: 0.05,
-                                    borderOpacity: 0.1,
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(14),
-                                      onTap: () {},
-                                      child: const Row(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Icon(Icons.phone_iphone_rounded, color: Color(0xFF8083FF), size: 18),
-                                          SizedBox(width: 8),
-                                          Text(
-                                            'Phone',
-                                            style: TextStyle(
-                                              fontSize: 14, 
-                                              fontWeight: FontWeight.w600,
-                                              color: Color(0xFFE4E1ED),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    
-                    // Biometric lock trigger in separate smaller glass plate
-                    GlassmorphicContainer(
-                      margin: const EdgeInsets.symmetric(horizontal: 20.0),
-                      padding: const EdgeInsets.all(12),
-                      borderRadius: 16,
-                      blur: 15,
-                      backgroundOpacity: 0.03,
-                      borderOpacity: 0.1,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Row(
-                                children: [
-                                  Icon(Icons.fingerprint_rounded, color: Colors.white, size: 16),
-                                  SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      'Biometric login coming in v2.0 — grant permission in Settings once available.',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              backgroundColor: theme.primaryColor,
-                              duration: const Duration(seconds: 3),
-                            ),
-                          );
-                        },
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.fingerprint_rounded, color: theme.primaryColor, size: 20),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Login with Biometrics',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: theme.primaryColor,
-                              ),
-                            ),
                           ],
                         ),
                       ),

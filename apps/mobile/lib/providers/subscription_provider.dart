@@ -26,12 +26,12 @@ class SponsorshipNotifier extends StateNotifier<bool> {
     }
   }
 
-  // Feature Flag Helpers (All features are fully unlocked for all users!)
-  bool get hasUnlimitedAnonymous => true;
+  // Feature Flag Helpers
+  bool get hasUnlimitedAnonymous => state;
   bool get canCreateGroups => true;
-  bool get canUseCustomThemes => true;
-  int get maxGroupCreationLimit => 999;
-  int get anonymousLimitPerWeek => 9999;
+  bool get canUseCustomThemes => state;
+  int get maxGroupCreationLimit => state ? 999 : 3;
+  int get anonymousLimitPerWeek => state ? 9999 : 5;
   int get retentionDays => 2; // Auto-delete choice
 }
 

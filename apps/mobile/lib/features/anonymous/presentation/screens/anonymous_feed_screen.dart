@@ -19,6 +19,25 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
     _loadPulses();
   }
 
+  String _calculateTimeLeft(String? createdAtStr) {
+    if (createdAtStr == null) return '7 days';
+    try {
+      final createdAt = DateTime.parse(createdAtStr);
+      final expiry = createdAt.add(const Duration(days: 7));
+      final diff = expiry.difference(DateTime.now());
+      if (diff.isNegative) return 'Expired';
+      if (diff.inDays >= 1) {
+        return '${diff.inDays}d left';
+      } else if (diff.inHours >= 1) {
+        return '${diff.inHours}h left';
+      } else {
+        return '${diff.inMinutes}m left';
+      }
+    } catch (_) {
+      return '7 days';
+    }
+  }
+
   Future<void> _loadPulses() async {
     setState(() => _loading = true);
     final raw = await ApiService().getPulses();
@@ -34,7 +53,7 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
           topics: topics,
           seenCount: (p['seen_count'] ?? 0) as int,
           repliesCount: (p['replies_count'] ?? 0) as int,
-          timeLeft: '7 days',
+          timeLeft: _calculateTimeLeft(p['created_at']),
         ));
       }
       _loading = false;
@@ -219,10 +238,16 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
                     const SizedBox(width: 6),
                     Text('${pulse.repliesCount} replies',
                         style: TextStyle(fontSize: 12, color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6))),
+                    const SizedBox(width: 16),
+                    Icon(Icons.access_time_rounded, size: 16,
+                        color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6)),
+                    const SizedBox(width: 6),
+                    Text(pulse.timeLeft,
+                        style: TextStyle(fontSize: 12, color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6))),
                   ],
                 ),
                 ElevatedButton.icon(
-                  onPressed: () => _showConnectionRequestDialog(context, theme),
+                  onPressed: () => _showConnectionRequestDialog(context, theme, pulse.id),
                   icon: const Icon(Icons.flash_on_rounded, size: 14, color: Colors.white),
                   label: const Text('Connect', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                   style: ElevatedButton.styleFrom(
@@ -258,32 +283,53 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
     );
   }
 
-  void _showConnectionRequestDialog(BuildContext context, ThemeData theme) {
+  void _showConnectionRequestDialog(BuildContext context, ThemeData theme, String pulseId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('⚡ Connect Request'),
-        content: const Text(
-          'Send a connection request to reveal your identities and start a secure, E2E encrypted private chat?',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFF59E0B),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () {
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Request dispatched! We\'ll let you know when they accept.')),
-              );
-            },
-            child: const Text('Request Connection'),
+      builder: (context) {
+        bool requesting = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: const Text('⚡ Connect Request'),
+            content: requesting
+                ? const SizedBox(
+                    height: 60,
+                    child: Center(child: CircularProgressIndicator(color: Color(0xFFF59E0B))),
+                  )
+                : const Text(
+                    'Send a connection request to reveal your identities and start a secure, E2E encrypted private chat?',
+                  ),
+            actions: requesting
+                ? []
+                : [
+                    TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF59E0B),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () async {
+                        setDialogState(() => requesting = true);
+                        final success = await ApiService().connectToPulseAuthor(pulseId);
+                        if (context.mounted) {
+                          Navigator.of(context).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(success
+                                  ? 'Request dispatched! We\'ll let you know when they accept.'
+                                  : 'Failed to dispatch request. You might already be connected.'),
+                              backgroundColor: success ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                            ),
+                          );
+                        }
+                      },
+                      child: const Text('Request Connection'),
+                    ),
+                  ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 

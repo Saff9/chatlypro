@@ -251,8 +251,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   }
 
   void _handleIncomingSocketPayload(Map<String, dynamic> payload) async {
-    if (payload['senderId'] != widget.chatData.username &&
-        payload['senderId'] != 'mock-uuid-owais-ahmed') {
+    if (payload['senderId'] != widget.chatData.username) {
       return;
     }
 
@@ -505,12 +504,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       
       final text = buffer.toString();
       
-      // Save locally to project workspace
-      final directory = Directory('chat_transcripts');
-      if (!await directory.exists()) {
-        await directory.create(recursive: true);
-      }
-      final file = File('chat_transcripts/chat_with_${widget.chatData.username}.txt');
+      // Save locally to sandboxed temporary directory
+      final tempDir = Directory.systemTemp;
+      final file = File('${tempDir.path}/chat_with_${widget.chatData.username}.txt');
       await file.writeAsString(text);
 
       // Copy to Clipboard
@@ -884,14 +880,73 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       _isRecordingVoice = false;
     });
 
-    final transcripts = [
-      "Let's activate the dead man's switch verification process.",
-      "Verify that the quantum key exchange is completed successfully.",
-      "Are we routing traffic through the P2P offline mesh network?",
-      "Forensic eraser mode is active. Clear database sector logs now.",
-      "Hey, did you make sure to test the duress calculator PIN?",
-    ];
-    final transcript = transcripts[DateTime.now().millisecond % transcripts.length];
+    final controller = TextEditingController();
+    final transcript = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          backgroundColor: const Color(0xFF13131B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Colors.white10),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.mic_rounded, color: Color(0xFF8083FF)),
+              SizedBox(width: 8),
+              Text('Voice Transcript', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Enter or dictate the transcript for your voice message (tap your keyboard microphone to dictate):',
+                style: TextStyle(color: Colors.white60, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Speak or type here...',
+                  hintStyle: const TextStyle(color: Colors.white30),
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.05),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                maxLines: 3,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: theme.primaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () {
+                Navigator.of(context).pop(controller.text.trim());
+              },
+              child: const Text('Send Voice', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (transcript == null || transcript.isEmpty) return;
 
     final newVoiceMsg = MessageData(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -903,6 +958,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       isVoice: true,
       voiceDuration: duration,
       voiceTranscript: transcript,
+      isSent: false,
     );
 
     final settingsBox = Hive.box('settings');
@@ -912,6 +968,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       await MessageStorageService().saveMessage(widget.chatData.username, newVoiceMsg);
     }
     _addMessageAndCheckLimit(newVoiceMsg);
+
+    if (_sharedSessionKey != null && _isServiceReady) {
+      final ciphertext = await EncryptionService().encryptMessage(
+        plaintext: "[Voice Message] $transcript",
+        secretKey: _sharedSessionKey!,
+      );
+      final wasSent = await WebSocketService().sendMessage(
+        recipientId: widget.chatData.username,
+        ciphertext: ciphertext,
+      );
+      if (wasSent) {
+        newVoiceMsg.isSent = true;
+        if (!isDuress) {
+          await MessageStorageService().saveMessage(widget.chatData.username, newVoiceMsg);
+        }
+        if (mounted) setState(() {});
+      }
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET!;
 
 // ─── Active socket registry ───────────────────────────────────────────────────
 // Keyed by username (unique per user). Incoming connections replace old ones.
-const activeConnections = new Map<string, WebSocket>();
+export const activeConnections = new Map<string, WebSocket>();
 
 // ─── In-memory offline message queue (Redis fallback only) ───────────────────
 interface OfflineMessage {

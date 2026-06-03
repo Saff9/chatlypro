@@ -2,6 +2,8 @@ import { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import crypto from 'crypto';
 import { pool } from '../db';
 import { verifyToken } from './auth';
+import { activeConnections } from '../sockets/chat';
+import { WebSocket } from 'ws';
 
 // ─── Pulse Routes ─────────────────────────────────────────────────────────────
 export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
@@ -77,6 +79,68 @@ export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPlu
     }
     return reply.send({ ok: true });
   });
+
+  // POST /api/pulse/:id/connect — request connection with the anonymous author (auth required)
+  fastify.post('/:id/connect', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id } = request.params as any;
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(id)) {
+      return reply.code(400).send({ error: 'Invalid id' });
+    }
+
+    try {
+      const postRes = await pool.query('SELECT author_id FROM pulse_posts WHERE id = $1', [id]);
+      if (postRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Pulse post not found' });
+      }
+      const authorId = postRes.rows[0].author_id;
+
+      if (authorId === user.userId) {
+        return reply.code(400).send({ error: 'You cannot connect with yourself' });
+      }
+
+      // Check if they are already connected
+      const checkFriend = await pool.query(
+        `SELECT 1 FROM friendships
+         WHERE (user_id_a = $1 AND user_id_b = $2)
+            OR (user_id_a = $2 AND user_id_b = $1)`,
+        [user.userId, authorId]
+      );
+
+      if (checkFriend.rows.length > 0) {
+        return reply.send({ success: true, message: 'Connection already exists or is pending' });
+      }
+
+      // Create a pending friendship
+      await pool.query(
+        `INSERT INTO friendships (user_id_a, user_id_b, status)
+         VALUES ($1, $2, 'pending')`,
+        [user.userId, authorId]
+      );
+
+      // Try to notify the author via socket if online!
+      const authorRes = await pool.query('SELECT username FROM users WHERE id = $1', [authorId]);
+      if (authorRes.rows.length > 0) {
+        const authorUsername = authorRes.rows[0].username;
+        const authorSocket = activeConnections.get(authorUsername);
+        if (authorSocket?.readyState === WebSocket.OPEN) {
+          authorSocket.send(JSON.stringify({
+            type: 'incoming_connection_request',
+            fromUsername: user.username,
+          }));
+        }
+      }
+
+      return reply.send({ success: true, message: 'Request dispatched' });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /pulse/:id/connect: DB error');
+      return reply.code(500).send({ error: 'Failed to send connection request' });
+    }
+  });
 }
 
 // ─── User Routes ──────────────────────────────────────────────────────────────
@@ -136,12 +200,26 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const { bio, mood, avatarColor } = request.body as any;
+    const { username, bio, mood, avatarColor } = request.body as any;
 
     const updates: string[] = [];
     const values: any[]    = [];
     let idx = 1;
 
+    if (username !== undefined) {
+      if (typeof username !== 'string') return reply.code(400).send({ error: 'username must be a string' });
+      const cleanUsername = username.toLowerCase().trim();
+      if (cleanUsername.length < 3 || cleanUsername.length > 30 || !/^[a-zA-Z0-9_-]+$/.test(cleanUsername)) {
+        return reply.code(400).send({ error: 'Username must be 3–30 characters and contain only letters, numbers, dashes and underscores' });
+      }
+      // Uniqueness check
+      const checkRes = await pool.query('SELECT 1 FROM users WHERE username = $1 AND id != $2', [cleanUsername, user.userId]);
+      if (checkRes.rows.length > 0) {
+        return reply.code(400).send({ error: 'Username is already taken' });
+      }
+      updates.push(`username = $${idx++}`);
+      values.push(cleanUsername);
+    }
     if (bio !== undefined) {
       if (typeof bio !== 'string') return reply.code(400).send({ error: 'bio must be a string' });
       updates.push(`bio = $${idx++}`);

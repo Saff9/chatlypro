@@ -36,14 +36,42 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   // contact avatar. In a future release this will be driven by a real engagement
   // score computed from message frequency and response latency metrics.
   Color _getRelationshipHealthColor(String username) {
-    final hash = username.codeUnits.fold(0, (a, b) => a + b) % 3;
-    switch (hash) {
-      case 0:
-        return const Color(0xFF10B981); // Active engagement
-      case 1:
-        return const Color(0xFFF59E0B); // Moderate engagement
-      default:
-        return const Color(0xFFEF4444); // Low engagement
+    final boxName = 'messages_$username';
+    if (!Hive.isBoxOpen(boxName)) {
+      return const Color(0xFFF59E0B); // Default: moderate
+    }
+    final box = Hive.box(boxName);
+    if (box.isEmpty) {
+      return const Color(0xFFF59E0B); // Default: moderate
+    }
+    
+    int latestTimestamp = 0;
+    for (final val in box.values) {
+      if (val != null) {
+        try {
+          final data = jsonDecode(val.toString()) as Map<String, dynamic>;
+          final ts = data['timestamp'] as int? ?? 0;
+          if (ts > latestTimestamp) {
+            latestTimestamp = ts;
+          }
+        } catch (_) {}
+      }
+    }
+    
+    if (latestTimestamp == 0) {
+      return const Color(0xFFF59E0B); // Default
+    }
+    
+    final diffMs = DateTime.now().millisecondsSinceEpoch - latestTimestamp;
+    final oneDayMs = 24 * 60 * 60 * 1000;
+    final sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    
+    if (diffMs < oneDayMs) {
+      return const Color(0xFF10B981); // Active (green)
+    } else if (diffMs < sevenDaysMs) {
+      return const Color(0xFFF59E0B); // Moderate (orange)
+    } else {
+      return const Color(0xFFEF4444); // Low (red)
     }
   }
 
@@ -167,9 +195,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Watch connectionProvider to trigger rebuild when connections change
-    ref.watch(connectionProvider);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    ref.listen(connectionProvider, (previous, next) {
       _loadChats();
     });
 
@@ -823,31 +849,33 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.4),
                       ),
-                      const SizedBox(height: 16),
-                      // Mock scan targets
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white10,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      if (kDebugMode) ...[
+                        const SizedBox(height: 16),
+                        // Mock scan targets
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white10,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              ),
+                              onPressed: () => simulateScan('chatly:connect:@sarah_adams'),
+                              child: const Text('Mock Sarah', style: TextStyle(fontSize: 11)),
                             ),
-                            onPressed: () => simulateScan('chatly:connect:@sarah_adams'),
-                            child: const Text('Mock Sarah', style: TextStyle(fontSize: 11)),
-                          ),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white10,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white10,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              ),
+                              onPressed: () => simulateScan('chatly:connect:@marcus_collect'),
+                              child: const Text('Mock Marcus', style: TextStyle(fontSize: 11)),
                             ),
-                            onPressed: () => simulateScan('chatly:connect:@marcus_collect'),
-                            child: const Text('Mock Marcus', style: TextStyle(fontSize: 11)),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                      ],
                     ] else ...[
                       const Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 48),
                       const SizedBox(height: 12),

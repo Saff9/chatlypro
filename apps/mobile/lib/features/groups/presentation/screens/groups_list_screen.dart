@@ -382,7 +382,7 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                       ),
                       style: const TextStyle(color: Colors.white, fontSize: 13),
                       items: const [
-                        DropdownMenuItem(value: 60000, child: Text('1 Minute (Test Mode)')),
+                        DropdownMenuItem(value: 60000, child: Text('1 Minute')),
                         DropdownMenuItem(value: 3600000, child: Text('1 Hour')),
                         DropdownMenuItem(value: 43200000, child: Text('12 Hours')),
                         DropdownMenuItem(value: 86400000, child: Text('24 Hours')),

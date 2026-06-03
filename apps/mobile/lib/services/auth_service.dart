@@ -127,28 +127,11 @@ class AuthService {
         return AuthResult(success: true, emailVerified: true);
       }
     } on DioException catch (e) {
-      final errorMsg = e.response?.data?['error'] ?? 'Registration failed. Try again.';
+      final errorMsg = e.response?.data?['error'] ?? 'Registration failed. Please try again.';
       return AuthResult(success: false, errorMessage: errorMsg);
     } catch (e) {
-      // ⚠️  OFFLINE DEMO FALLBACK — REMOVE IN PRODUCTION.
-      _token = 'offline-dev-token-${username.hashCode}';
-      _userId = 'offline-uid-${username.hashCode}';
-      _username = username;
-
-      final keyPair = await _crypto.generateKeyPair();
-      final pubKeyBase64 = await _crypto.exportPublicKey(keyPair);
-      final privKeyBase64 = await _crypto.exportPrivateKey(keyPair);
-
-      final secureBox = await Hive.openBox('secure_vault');
-      await secureBox.put('jwt_token', _token);
-      await secureBox.put('user_id', _userId);
-      await secureBox.put('username', _username);
-      await secureBox.put('public_key', pubKeyBase64);
-      await secureBox.put('private_key', privKeyBase64);
-      await secureBox.put('offline_pw_hash', _hashPassword(password));
-
-      WebSocketService().connect(url: AppConfig.wsBaseUrl, token: _token!);
-      return AuthResult(success: true, emailVerified: true);
+      debugPrint('register: unexpected error: $e');
+      return AuthResult(success: false, errorMessage: 'Network error. Please check your connection and try again.');
     }
     return AuthResult(success: false, errorMessage: 'Unknown error occurred.');
   }
@@ -207,48 +190,11 @@ class AuthService {
           );
         }
       }
-      final errorMsg = e.response?.data?['error'] ?? 'Authentication failed. Please check inputs.';
+      final errorMsg = e.response?.data?['error'] ?? 'Invalid email or password.';
       return AuthResult(success: false, errorMessage: errorMsg);
     } catch (e) {
-      // ⚠️  OFFLINE DEMO FALLBACK — REMOVE IN PRODUCTION.
-      final secureBox = await Hive.openBox('secure_vault');
-      final storedHash = secureBox.get('offline_pw_hash') as String?;
-      final enteredHash = _hashPassword(password);
-
-      final bool credentialsLookValid =
-          email.contains('@') && email.contains('.') && password.length >= 8;
-
-      if (!credentialsLookValid) {
-        return AuthResult(success: false, errorMessage: 'Invalid credentials format.');
-      }
-
-      if (storedHash != null && storedHash != enteredHash) {
-        return AuthResult(success: false, errorMessage: 'Wrong offline password.');
-      }
-
-      _token = storedHash != null
-          ? (secureBox.get('jwt_token') as String? ?? 'offline-dev-token-fallback')
-          : 'offline-dev-token-fallback';
-      _userId = secureBox.get('user_id') as String? ?? 'offline-uid-fallback';
-      _username = secureBox.get('username') as String? ?? email.split('@').first;
-
-      await secureBox.put('jwt_token', _token);
-      await secureBox.put('user_id', _userId);
-      await secureBox.put('username', _username);
-      if (storedHash == null) {
-        await secureBox.put('offline_pw_hash', enteredHash);
-      }
-
-      if (!secureBox.containsKey('private_key')) {
-        final keyPair = await _crypto.generateKeyPair();
-        final pubKeyBase64 = await _crypto.exportPublicKey(keyPair);
-        final privKeyBase64 = await _crypto.exportPrivateKey(keyPair);
-        await secureBox.put('public_key', pubKeyBase64);
-        await secureBox.put('private_key', privKeyBase64);
-      }
-
-      WebSocketService().connect(url: AppConfig.wsBaseUrl, token: _token!);
-      return AuthResult(success: true, emailVerified: true);
+      debugPrint('login: unexpected error: $e');
+      return AuthResult(success: false, errorMessage: 'Network error. Please check your connection and try again.');
     }
     return AuthResult(success: false, errorMessage: 'Unknown error occurred.');
   }
@@ -353,6 +299,22 @@ class AuthService {
   Future<void> save2FAStatus(bool enabled) async {
     final secureBox = await Hive.openBox('secure_vault');
     await secureBox.put('two_factor_enabled', enabled);
+  }
+
+  /// Check if a username is available on the server
+  Future<bool> isUsernameAvailable(String username) async {
+    try {
+      final response = await _dio.get(
+        '/auth/username-check',
+        queryParameters: {'username': username},
+      );
+      if (response.statusCode == 200) {
+        return response.data['available'] == true;
+      }
+    } catch (e) {
+      debugPrint('isUsernameAvailable error: $e');
+    }
+    return false;
   }
 
   /// Disconnects socket and wipes stored session tokens

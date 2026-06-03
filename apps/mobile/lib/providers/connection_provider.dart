@@ -214,7 +214,7 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
 
       // Only process if it is addressed to this user (we mock username matches or process for preview)
       final box = await Hive.openBox('settings');
-      final myUsername = box.get('username', defaultValue: 'owais_ahmed') as String;
+      final myUsername = box.get('username', defaultValue: '') as String;
 
       if (target.toLowerCase().trim() == myUsername.toLowerCase().trim()) {
         if (type == 'PROXIMITY_INVITE') {
@@ -244,7 +244,7 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
     if (_udpInviteSocket == null) return;
     try {
       final box = await Hive.openBox('settings');
-      final myUsername = box.get('username', defaultValue: 'owais_ahmed') as String;
+      final myUsername = box.get('username', defaultValue: '') as String;
 
       final payload = jsonEncode({
         'type': 'PROXIMITY_INVITE',

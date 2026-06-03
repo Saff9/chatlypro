@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -2765,8 +2766,44 @@ class SettingsScreen extends ConsumerWidget {
                           itemCount: connections.length,
                           itemBuilder: (context, index) {
                             final contact = connections[index];
-                            final code = contact.codeUnits.fold<int>(0, (prev, element) => prev + element);
-                            final score = 20 + (code % 76);
+                            final boxName = 'messages_$contact';
+                            int latestTimestamp = 0;
+                            if (Hive.isBoxOpen(boxName)) {
+                              final box = Hive.box(boxName);
+                              for (final val in box.values) {
+                                if (val != null) {
+                                  try {
+                                    final data = jsonDecode(val.toString()) as Map<String, dynamic>;
+                                    final ts = data['timestamp'] as int? ?? 0;
+                                    if (ts > latestTimestamp) {
+                                      latestTimestamp = ts;
+                                    }
+                                  } catch (_) {}
+                                }
+                              }
+                            }
+                            
+                            int score = 0;
+                            if (latestTimestamp > 0) {
+                              final diffMs = DateTime.now().millisecondsSinceEpoch - latestTimestamp;
+                              final oneDayMs = 24 * 60 * 60 * 1000;
+                              final sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+                              
+                              if (diffMs < oneDayMs) {
+                                score = 90 + ((oneDayMs - diffMs) * 10 ~/ oneDayMs); // 90-100% if < 24h
+                              } else if (diffMs < sevenDaysMs) {
+                                score = 40 + ((sevenDaysMs - diffMs) * 50 ~/ sevenDaysMs); // 40-90% if < 7d
+                              } else {
+                                final thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+                                if (diffMs < thirtyDaysMs) {
+                                  score = 10 + ((thirtyDaysMs - diffMs) * 30 ~/ thirtyDaysMs); // 10-40% if < 30d
+                                } else {
+                                  score = 5;
+                                }
+                              }
+                            } else {
+                              score = 25; // Default for no history
+                            }
                             
                             Color healthColor;
                             String statusText;

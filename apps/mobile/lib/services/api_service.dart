@@ -97,11 +97,12 @@ class ApiService {
     }
   }
 
-  /// Update bio, mood, or avatar color on the server.
-  Future<bool> updateProfile({String? bio, String? mood, String? avatarColor}) async {
+  /// Update username, bio, mood, or avatar color on the server.
+  Future<bool> updateProfile({String? username, String? bio, String? mood, String? avatarColor}) async {
     try {
       final opts = await _auth();
       final body = <String, dynamic>{};
+      if (username != null) body['username'] = username;
       if (bio != null) body['bio'] = bio;
       if (mood != null) body['mood'] = mood;
       if (avatarColor != null) body['avatarColor'] = avatarColor;
@@ -110,6 +111,18 @@ class ApiService {
       return true;
     } catch (e) {
       debugPrint('updateProfile error: $e');
+      return false;
+    }
+  }
+
+  /// Request E2E connection with anonymous author of a pulse post
+  Future<bool> connectToPulseAuthor(String pulseId) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.post('/pulse/$pulseId/connect', options: opts);
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('connectToPulseAuthor error: $e');
       return false;
     }
   }
