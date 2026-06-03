@@ -1,33 +1,12 @@
 import { FastifyInstance, FastifyPluginOptions } from 'fastify';
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { pool } from '../db';
+import { verifyToken } from './auth';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-prod';
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-if (NODE_ENV === 'production' && JWT_SECRET === 'chatly-super-secret-key-change-in-prod') {
-  console.error('[FATAL] JWT_SECRET must be set to a strong random value in production. Refusing to start.');
-  process.exit(1);
-}
-
-// ─── In-memory fallback stores ────────────────────────────────────────────────
-const inMemoryPulses: any[] = [];
-import { inMemoryUsers } from './auth';
-
-function verifyToken(authHeader?: string): { userId: string; username: string } | null {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  try {
-    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET) as any;
-    return { userId: decoded.userId, username: decoded.username };
-  } catch {
-    return null;
-  }
-}
-
+// ─── Pulse Routes ─────────────────────────────────────────────────────────────
 export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
 
-  // ── GET /api/pulse — list all active pulses (newest first, max 50) ──────────
+  // GET /api/pulse — newest first, max 50, within 7 days
   fastify.get('/', async (request, reply) => {
     try {
       const result = await pool.query(
@@ -38,31 +17,33 @@ export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPlu
          LIMIT 50`
       );
       return reply.send({ pulses: result.rows });
-    } catch {
-      // memory fallback
-      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const pulses = inMemoryPulses
-        .filter(p => p.createdAt > cutoff)
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, 50);
-      return reply.send({ pulses });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /pulse: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
     }
   });
 
-  // ── POST /api/pulse — create a new anonymous pulse ─────────────────────────
+  // POST /api/pulse — create anonymous pulse (auth required)
   fastify.post('/', async (request, reply) => {
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
 
     const { text, topics } = request.body as any;
-    if (!text || text.trim().length === 0) {
+    const cleanText = typeof text === 'string' ? text.trim() : '';
+
+    if (!cleanText) {
       return reply.code(400).send({ error: 'Pulse text is required' });
     }
-    if (text.length > 200) {
-      return reply.code(400).send({ error: 'Pulse text must be under 200 characters' });
+    if (cleanText.length > 200) {
+      return reply.code(400).send({ error: 'Pulse text must be 200 characters or fewer' });
     }
 
-    const topicsArray = Array.isArray(topics) ? topics : (topics ? topics.split(' ').map((t: string) => t.trim()).filter(Boolean) : []);
+    const topicsArray: string[] = Array.isArray(topics)
+      ? topics.map((t: any) => String(t).trim()).filter(Boolean).slice(0, 5)
+      : typeof topics === 'string'
+        ? topics.split(' ').map(t => t.trim()).filter(Boolean).slice(0, 5)
+        : [];
+
     const newId = crypto.randomUUID();
 
     try {
@@ -70,49 +51,50 @@ export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPlu
         `INSERT INTO pulse_posts (id, author_id, text, topics, seen_count, replies_count)
          VALUES ($1, $2, $3, $4, 0, 0)
          RETURNING id, text, topics, seen_count, replies_count, created_at`,
-        [newId, user.userId, text.trim(), JSON.stringify(topicsArray)]
+        [newId, user.userId, cleanText, JSON.stringify(topicsArray)]
       );
       return reply.code(201).send({ pulse: result.rows[0] });
-    } catch {
-      const pulse = {
-        id: newId,
-        author_id: user.userId,
-        text: text.trim(),
-        topics: topicsArray,
-        seen_count: 0,
-        replies_count: 0,
-        createdAt: Date.now(),
-      };
-      inMemoryPulses.push(pulse);
-      return reply.code(201).send({ pulse });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /pulse: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
     }
   });
 
-  // ── POST /api/pulse/:id/seen — increment seen count ──────────────────────
+  // POST /api/pulse/:id/seen — increment seen count (no auth required, fire-and-forget)
   fastify.post('/:id/seen', async (request, reply) => {
     const { id } = request.params as any;
+
+    // Validate UUID format to prevent injection
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(id)) {
+      return reply.code(400).send({ error: 'Invalid id' });
+    }
+
     try {
       await pool.query('UPDATE pulse_posts SET seen_count = seen_count + 1 WHERE id = $1', [id]);
-    } catch {
-      const p = inMemoryPulses.find(x => x.id === id);
-      if (p) p.seen_count = (p.seen_count || 0) + 1;
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /pulse/:id/seen: DB error');
     }
     return reply.send({ ok: true });
   });
 }
 
+// ─── User Routes ──────────────────────────────────────────────────────────────
 export async function userRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
 
-  // ── GET /api/users/search?username=xxx — find users by username ────────────
+  // GET /api/users/search?username=xxx — find users by username (auth required)
   fastify.get('/search', async (request, reply) => {
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
 
     const { username } = request.query as any;
-    if (!username || username.trim().length < 2) {
-      return reply.code(400).send({ error: 'Username query must be at least 2 characters' });
+    const q = typeof username === 'string' ? username.trim() : '';
+    if (q.length < 2) {
+      return reply.code(400).send({ error: 'Search query must be at least 2 characters' });
     }
-    const q = username.toLowerCase().trim();
+    if (q.length > 30) {
+      return reply.code(400).send({ error: 'Search query too long' });
+    }
 
     try {
       const result = await pool.query(
@@ -121,18 +103,16 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
          WHERE LOWER(username) LIKE $1
            AND id != $2
          LIMIT 20`,
-        [`%${q}%`, user.userId]
+        [`%${q.toLowerCase()}%`, user.userId]
       );
       return reply.send({ users: result.rows });
-    } catch {
-      const users = inMemoryUsers
-        .filter(u => u.username.toLowerCase().includes(q) && u.id !== user.userId)
-        .map(u => ({ id: u.id, username: u.username, avatar_color: u.avatarColor, bio: '', mood: '🎵 Vibing', tier: 'free' }));
-      return reply.send({ users });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /users/search: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
     }
   });
 
-  // ── GET /api/users/profile — get own profile ────────────────────────────────
+  // GET /api/users/profile — get own profile (auth required)
   fastify.get('/profile', async (request, reply) => {
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
@@ -145,61 +125,57 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
       );
       if (result.rows.length === 0) return reply.code(404).send({ error: 'User not found' });
       return reply.send({ profile: result.rows[0] });
-    } catch {
-      const u = inMemoryUsers.find(u => u.id === user.userId);
-      if (!u) return reply.code(404).send({ error: 'User not found' });
-      return reply.send({ profile: { id: u.id, username: u.username, avatar_color: u.avatarColor, bio: '', mood: '🎵 Vibing', tier: 'free' } });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /users/profile: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
     }
   });
 
-  // ── PUT /api/users/profile — update bio, mood, avatar ─────────────────────
+  // PUT /api/users/profile — update bio, mood, avatarColor (auth required)
   fastify.put('/profile', async (request, reply) => {
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
 
     const { bio, mood, avatarColor } = request.body as any;
 
+    const updates: string[] = [];
+    const values: any[]    = [];
+    let idx = 1;
+
+    if (bio !== undefined) {
+      if (typeof bio !== 'string') return reply.code(400).send({ error: 'bio must be a string' });
+      updates.push(`bio = $${idx++}`);
+      values.push(bio.trim().slice(0, 100));
+    }
+    if (mood !== undefined) {
+      if (typeof mood !== 'string') return reply.code(400).send({ error: 'mood must be a string' });
+      updates.push(`mood = $${idx++}`);
+      values.push(mood.trim().slice(0, 50));
+    }
+    if (avatarColor !== undefined) {
+      // Only allow valid hex color codes
+      if (typeof avatarColor !== 'string' || !/^#[0-9a-fA-F]{3,8}$/.test(avatarColor)) {
+        return reply.code(400).send({ error: 'avatarColor must be a valid hex color' });
+      }
+      updates.push(`avatar_color = $${idx++}`);
+      values.push(avatarColor);
+    }
+
+    if (updates.length === 0) {
+      return reply.code(400).send({ error: 'No valid fields to update' });
+    }
+
+    values.push(user.userId);
     try {
-      // Verify user exists in the database
-      const userCheck = await pool.query('SELECT id FROM users WHERE id = $1', [user.userId]);
-      if (userCheck.rows.length === 0) {
-        return reply.code(404).send({ error: 'User not found' });
-      }
-
-      const updates: string[] = [];
-      const values: any[] = [];
-      let idx = 1;
-
-      if (bio !== undefined) { updates.push(`bio = $${idx++}`); values.push(bio.slice(0, 100)); }
-      if (mood !== undefined) { updates.push(`mood = $${idx++}`); values.push(mood.slice(0, 50)); }
-      if (avatarColor !== undefined) { updates.push(`avatar_color = $${idx++}`); values.push(avatarColor); }
-
-      if (updates.length === 0) return reply.code(400).send({ error: 'No fields to update' });
-
-      // Whitelist columns to prevent SQL injection
-      const ALLOWED_COLUMNS = ['bio', 'mood', 'avatar_color'];
-      for (const update of updates) {
-        const col = update.split('=')[0].trim();
-        if (!ALLOWED_COLUMNS.includes(col)) {
-          return reply.code(400).send({ error: 'Invalid update field' });
-        }
-      }
-
-      values.push(user.userId);
-      await pool.query(
-        `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx}`,
+      const result = await pool.query(
+        `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id`,
         values
       );
+      if (result.rowCount === 0) return reply.code(404).send({ error: 'User not found' });
       return reply.send({ success: true });
-    } catch {
-      const u = inMemoryUsers.find(u => u.id === user.userId);
-      if (u) {
-        if (bio !== undefined) u.bio = bio;
-        if (mood !== undefined) u.mood = mood;
-        if (avatarColor !== undefined) u.avatarColor = avatarColor;
-        return reply.send({ success: true, note: 'Saved in memory fallback' });
-      }
-      return reply.code(404).send({ error: 'User not found' });
+    } catch (err: any) {
+      fastify.log.error(err, 'PUT /users/profile: DB error');
+      return reply.code(503).send({ error: 'Update failed. Please try again.' });
     }
   });
 }
