@@ -42,6 +42,14 @@ const isLocal = !rawUrl || rawUrl.includes('localhost') || rawUrl.includes('127.
 
 const databaseUrl = rawUrl ? sanitizeDatabaseUrl(rawUrl) : 'postgresql://postgres:postgres@localhost:5432/chatly';
 
+// ─── Diagnostic: print sanitized connection info (no password) ────────────────
+try {
+  const u = new URL(databaseUrl);
+  console.log(`[Database] Connecting to: host=${u.hostname} port=${u.port || 5432} user=${u.username} db=${u.pathname.slice(1)}`);
+} catch {
+  console.log('[Database] Could not parse DATABASE_URL for diagnostic logging.');
+}
+
 // ─── SSL Configuration ────────────────────────────────────────────────────────
 // For remote connections: allow SSL but don't reject self-signed certs.
 // Supabase uses a self-signed CA by default. rejectUnauthorized:false is fine
