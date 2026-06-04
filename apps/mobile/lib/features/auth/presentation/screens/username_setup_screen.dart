@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
-import 'package:dio/dio.dart';
-import '../../../../core/config/app_config.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
 import '../../../../navigation/main_navigation.dart';
 import '../../../../services/auth_service.dart';

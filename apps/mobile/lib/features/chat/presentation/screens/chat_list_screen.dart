@@ -64,8 +64,8 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     }
     
     final diffMs = DateTime.now().millisecondsSinceEpoch - latestTimestamp;
-    final oneDayMs = 24 * 60 * 60 * 1000;
-    final sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
     
     if (diffMs < oneDayMs) {
       return const Color(0xFF10B981); // Active (green)

@@ -25,6 +25,7 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
     transporter = {
       sendMail: async (mailOptions: any) => {
         console.warn(`[SECURITY WARNING] Attempted to send email to ${mailOptions.to.replace(/(?<=.{2}).(?=[^@]*?@)/g, '*')} but SMTP is unconfigured in production.`);
+        console.log(`[DEVELOPER MOCK LOG] Verification email content for ${mailOptions.to}:\nSubject: ${mailOptions.subject}\nBody: ${mailOptions.text}\n`);
         return { messageId: 'unconfigured-smtp-production-id' };
       }
     } as any;
