@@ -180,4 +180,49 @@ class ApiService {
       return [];
     }
   }
+
+  Future<List<Map<String, dynamic>>> getPendingConnections() async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.get('/users/connections/pending', options: opts);
+      final List list = res.data['requests'] ?? [];
+      return list.cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('getPendingConnections error: $e');
+      return [];
+    }
+  }
+
+  Future<bool> connectToUser(String username) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.post('/users/connect/$username', options: opts);
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('connectToUser error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> acceptConnection(String username) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.post('/users/connections/accept/$username', options: opts);
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('acceptConnection error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> rejectConnection(String username) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.post('/users/connections/reject/$username', options: opts);
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('rejectConnection error: $e');
+      return false;
+    }
+  }
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../services/dead_mans_switch_service.dart';
 import '../../../auth/presentation/screens/welcome_screen.dart';
 import '../../../../providers/subscription_provider.dart';
@@ -1202,7 +1203,11 @@ class SettingsScreen extends ConsumerWidget {
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          backgroundColor: const Color(0xFF13131B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Colors.white10),
+          ),
           title: Row(
             children: [
               Icon(
@@ -1210,7 +1215,10 @@ class SettingsScreen extends ConsumerWidget {
                 color: const Color(0xFFEF4444),
               ),
               const SizedBox(width: 10),
-              Text(isSponsor ? 'Manage Support' : 'Support Chatly'),
+              const Text(
+                'Support Chatly',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
             ],
           ),
           content: Column(
@@ -1220,37 +1228,42 @@ class SettingsScreen extends ConsumerWidget {
               Text(
                 isSponsor
                     ? 'Thank you for sponsoring the project! You can update your support or opt-out at any time below.'
-                    : 'Since we never show ads or sell data, Chatly is 100% powered by user sponsorships. Help cover WebSocket servers and cryptography relays.',
-                style: const TextStyle(fontSize: 13, height: 1.4),
+                    : 'Since we never show ads or sell data, Chatly is 100% powered by user sponsorships. Help cover secure server costs and release fees to publish to Google Play & Apple App Store.',
+                style: const TextStyle(fontSize: 12, height: 1.45, color: Colors.white70),
               ),
               const SizedBox(height: 20),
               if (!isSponsor) ...[
-                _buildDonationTile(
+                _buildRazorpayDonationTile(
                   context,
                   ref,
                   title: 'Server Supporter',
-                  price: '\$5/month',
-                  icon: Icons.coffee_rounded,
+                  description: 'Keep secure WebSocket servers running 24/7.',
+                  price: '₹199 once',
+                  url: 'https://razorpay.me/@CodeChap?amount=KxK8ikz%2BGFZ8lMDydVeeuA%3D%3D',
+                  icon: Icons.dns_rounded,
                   color: const Color(0xFF10B981),
                 ),
                 const SizedBox(height: 10),
-                _buildDonationTile(
+                _buildRazorpayDonationTile(
                   context,
                   ref,
-                  title: 'Privacy Advocate',
-                  price: '\$15/month',
-                  icon: Icons.shield_outlined,
+                  title: 'App Store Publisher',
+                  description: 'Fund Play Store & App Store developer fees.',
+                  price: '₹299 once',
+                  url: 'https://razorpay.me/@CodeChap?amount=kXxURMaXFk%2Bmrv%2B9uGrYpg%3D%3D',
+                  icon: Icons.rocket_launch_rounded,
                   color: const Color(0xFF6366F1),
                 ),
                 const SizedBox(height: 10),
                 ListTile(
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
+                    side: const BorderSide(color: Colors.white10),
                   ),
+                  tileColor: Colors.white.withValues(alpha: 0.01),
                   leading: const Icon(Icons.currency_bitcoin_rounded, color: Color(0xFFF59E0B)),
-                  title: const Text('Anonymous Crypto', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: const Text('Monero (XMR) & Bitcoin', style: TextStyle(fontSize: 11)),
+                  title: const Text('Anonymous Crypto', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
+                  subtitle: const Text('Monero (XMR) & Bitcoin', style: TextStyle(fontSize: 10, color: Colors.white54)),
                   onTap: () {
                     Navigator.of(context).pop();
                     _showCryptoDonationDialog(context, ref);
@@ -1283,11 +1296,79 @@ class SettingsScreen extends ConsumerWidget {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
+              child: const Text('Close', style: TextStyle(color: Colors.white60)),
             ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildRazorpayDonationTile(
+    BuildContext context,
+    WidgetRef ref, {
+    required String title,
+    required String description,
+    required String price,
+    required String url,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.015),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: color, size: 18),
+        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4.0),
+          child: Text(description, style: const TextStyle(fontSize: 10, color: Colors.white54)),
+        ),
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            price,
+            style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 10),
+          ),
+        ),
+        onTap: () async {
+          final uri = Uri.parse(url);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+          await ref.read(sponsorshipProvider.notifier).setSponsorStatus(true);
+          if (context.mounted) {
+            Navigator.of(context).pop();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.favorite_rounded, color: Colors.white, size: 16),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text('Thank you! Redirecting to secure checkout for $title...')),
+                  ],
+                ),
+                backgroundColor: const Color(0xFF10B981),
+              ),
+            );
+          }
+        },
+      ),
     );
   }
 

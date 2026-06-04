@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive/hive.dart';
 import 'dart:convert';
 import 'dart:io';
+import '../services/api_service.dart';
+import '../services/websocket_service.dart';
 
 class ConnectionInvite {
   final String username;
@@ -64,6 +66,7 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
   ConnectionNotifier() : super(ConnectionState(invitations: [], connections: [])) {
     _loadData();
     _startProximityListener();
+    _startWebSocketListener();
   }
 
   RawDatagramSocket? _udpInviteSocket;
@@ -80,6 +83,9 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
       invitations: invites,
       connections: List<String>.from(storedConns),
     );
+
+    // Sync pending requests with server in background
+    syncPendingInvitations();
   }
 
   Future<void> _saveData() async {
@@ -87,6 +93,87 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
     final jsonStr = jsonEncode(state.invitations.map((e) => e.toJson()).toList());
     await box.put('connection_invitations', jsonStr);
     await box.put('accepted_connections', state.connections);
+  }
+
+  Future<void> syncPendingInvitations() async {
+    try {
+      final raw = await ApiService().getPendingConnections();
+      final List<ConnectionInvite> updatedInvites = List.from(state.invitations);
+      bool changed = false;
+
+      for (final r in raw) {
+        final u = r['username']?.toString().toLowerCase().trim() ?? '';
+        if (u.isEmpty) continue;
+
+        final exists = updatedInvites.any((i) => i.username == u && i.type == 'incoming');
+        if (!exists) {
+          updatedInvites.add(ConnectionInvite(
+            username: u,
+            type: 'incoming',
+            status: 'pending',
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+          ));
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        state = state.copyWith(invitations: updatedInvites);
+        await _saveData();
+      }
+    } catch (_) {}
+  }
+
+  void _startWebSocketListener() {
+    WebSocketService().messageStream.listen((payload) async {
+      final type = payload['type'] as String?;
+      if (type == 'incoming_connection_request') {
+        final fromUsername = payload['fromUsername'] as String?;
+        if (fromUsername != null) {
+          final clean = fromUsername.toLowerCase().trim();
+
+          if (state.connections.contains(clean)) return;
+          final exists = state.invitations.any((i) => i.username == clean && i.type == 'incoming');
+          if (exists) return;
+
+          final invite = ConnectionInvite(
+            username: clean,
+            type: 'incoming',
+            status: 'pending',
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+          );
+
+          state = state.copyWith(invitations: [...state.invitations, invite]);
+          await _saveData();
+        }
+      } else if (type == 'connection_accepted') {
+        final fromUsername = payload['fromUsername'] as String?;
+        if (fromUsername != null) {
+          final clean = fromUsername.toLowerCase().trim();
+
+          final List<String> newConns = List.from(state.connections);
+          if (!newConns.contains(clean)) {
+            newConns.add(clean);
+          }
+
+          final updatedInvites = state.invitations.map((i) {
+            if (i.username == clean && i.type == 'outgoing') {
+              return ConnectionInvite(
+                username: i.username,
+                type: i.type,
+                status: 'accepted',
+                timestamp: i.timestamp,
+                isProximity: i.isProximity,
+              );
+            }
+            return i;
+          }).toList();
+
+          state = state.copyWith(invitations: updatedInvites, connections: newConns);
+          await _saveData();
+        }
+      }
+    });
   }
 
   /// Sends a connection invitation by username
@@ -98,6 +185,11 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
     if (state.connections.contains(clean)) return false;
     final exists = state.invitations.any((i) => i.username == clean && i.type == 'outgoing');
     if (exists) return true;
+
+    if (!isProximity) {
+      final success = await ApiService().connectToUser(clean);
+      if (!success) return false;
+    }
 
     final invite = ConnectionInvite(
       username: clean,
@@ -121,6 +213,8 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
   /// Accept an incoming connection request
   Future<void> acceptInvitation(String username) async {
     final clean = username.toLowerCase().trim();
+
+    await ApiService().acceptConnection(clean);
     
     // Update invitation status
     final updatedInvites = state.invitations.map((i) {
@@ -148,6 +242,8 @@ class ConnectionNotifier extends StateNotifier<ConnectionState> {
   /// Reject an incoming connection request
   Future<void> rejectInvitation(String username) async {
     final clean = username.toLowerCase().trim();
+
+    await ApiService().rejectConnection(clean);
     
     final updatedInvites = state.invitations.map((i) {
       if (i.username == clean && i.type == 'incoming') {

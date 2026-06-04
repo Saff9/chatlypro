@@ -398,6 +398,110 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
             },
           ),
 
+          // Pending Incoming Connection Requests Banner / List
+          Consumer(
+            builder: (context, ref, child) {
+              final connState = ref.watch(connectionProvider);
+              final pendingIncoming = connState.invitations
+                  .where((i) => i.type == 'incoming' && i.status == 'pending' && !i.isProximity)
+                  .toList();
+              
+              if (pendingIncoming.isEmpty) return const SizedBox.shrink();
+
+              return Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.02),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.person_add_rounded, color: Color(0xFF6366F1), size: 16),
+                        const SizedBox(width: 8),
+                        Text(
+                          'CONNECTION REQUESTS (${pendingIncoming.length})',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.8,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: pendingIncoming.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (context, idx) {
+                        final req = pendingIncoming[idx];
+                        return Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 14,
+                              backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.15),
+                              child: Text(
+                                req.username[0].toUpperCase(),
+                                style: const TextStyle(color: Color(0xFF6366F1), fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '@${req.username}',
+                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                ref.read(connectionProvider.notifier).rejectInvitation(req.username);
+                              },
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.redAccent,
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(50, 32),
+                              ),
+                              child: const Text('Decline', style: TextStyle(fontSize: 11)),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                ref.read(connectionProvider.notifier).acceptInvitation(req.username);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Connected with @${req.username}!'),
+                                    backgroundColor: const Color(0xFF10B981),
+                                  ),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                minimumSize: const Size(60, 32),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              child: const Text('Accept', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+
           // P2P Nearby Peers discovery row
           StreamBuilder<List<P2PPeer>>(
             stream: P2PMeshService().peersStream,

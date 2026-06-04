@@ -246,6 +246,169 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
       return reply.code(503).send({ error: 'Update failed. Please try again.' });
     }
   });
+
+  // GET /api/users/connections/pending — get pending connection requests for the current user
+  fastify.get('/connections/pending', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const result = await pool.query(
+        `SELECT u.username, u.avatar_color as "avatarColor", u.mood, u.bio
+         FROM friendships f
+         JOIN users u ON f.user_id_a = u.id
+         WHERE f.user_id_b = $1 AND f.status = 'pending'`,
+        [user.userId]
+      );
+      return reply.send({ requests: result.rows });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /users/connections/pending: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  // POST /api/users/connect/:username — send connection request
+  fastify.post('/connect/:username', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { username } = request.params as any;
+    const targetUsername = typeof username === 'string' ? username.toLowerCase().trim() : '';
+
+    if (!targetUsername) {
+      return reply.code(400).send({ error: 'Username is required' });
+    }
+
+    if (targetUsername === user.username.toLowerCase()) {
+      return reply.code(400).send({ error: 'You cannot connect with yourself' });
+    }
+
+    try {
+      // Find recipient user
+      const targetRes = await pool.query('SELECT id FROM users WHERE LOWER(username) = $1', [targetUsername]);
+      if (targetRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+      const targetId = targetRes.rows[0].id;
+
+      // Check if friendship exists
+      const checkFriend = await pool.query(
+        `SELECT status FROM friendships
+         WHERE (user_id_a = $1 AND user_id_b = $2)
+            OR (user_id_a = $2 AND user_id_b = $1)`,
+        [user.userId, targetId]
+      );
+
+      if (checkFriend.rows.length > 0) {
+        return reply.send({ success: true, message: 'Connection already exists or is pending' });
+      }
+
+      // Insert pending friendship: user.userId is user_id_a (sender)
+      await pool.query(
+        `INSERT INTO friendships (user_id_a, user_id_b, status)
+         VALUES ($1, $2, 'pending')`,
+        [user.userId, targetId]
+      );
+
+      // Notify target via WebSocket if online
+      const targetSocket = activeConnections.get(targetUsername);
+      if (targetSocket?.readyState === WebSocket.OPEN) {
+        targetSocket.send(JSON.stringify({
+          type: 'incoming_connection_request',
+          fromUsername: user.username,
+        }));
+      }
+
+      return reply.send({ success: true, message: 'Connection request sent' });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /users/connect/:username: DB error');
+      return reply.code(500).send({ error: 'Failed to send connection request' });
+    }
+  });
+
+  // POST /api/users/connections/accept/:username — accept connection request
+  fastify.post('/connections/accept/:username', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { username } = request.params as any;
+    const targetUsername = typeof username === 'string' ? username.toLowerCase().trim() : '';
+
+    if (!targetUsername) {
+      return reply.code(400).send({ error: 'Username is required' });
+    }
+
+    try {
+      const targetRes = await pool.query('SELECT id FROM users WHERE LOWER(username) = $1', [targetUsername]);
+      if (targetRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+      const targetId = targetRes.rows[0].id;
+
+      // Update friendship status to accepted
+      const result = await pool.query(
+        `UPDATE friendships
+         SET status = 'accepted'
+         WHERE user_id_a = $1 AND user_id_b = $2 AND status = 'pending'`,
+        [targetId, user.userId] // targetId is sender, user.userId is receiver (us)
+      );
+
+      if (result.rowCount === 0) {
+        return reply.code(400).send({ error: 'No pending request from this user' });
+      }
+
+      // Notify target via WebSocket if online that connection was accepted
+      const targetSocket = activeConnections.get(targetUsername);
+      if (targetSocket?.readyState === WebSocket.OPEN) {
+        targetSocket.send(JSON.stringify({
+          type: 'connection_accepted',
+          fromUsername: user.username,
+        }));
+      }
+
+      return reply.send({ success: true, message: 'Connection request accepted' });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /users/connections/accept/:username: DB error');
+      return reply.code(500).send({ error: 'Failed to accept connection request' });
+    }
+  });
+
+  // POST /api/users/connections/reject/:username — reject connection request
+  fastify.post('/connections/reject/:username', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { username } = request.params as any;
+    const targetUsername = typeof username === 'string' ? username.toLowerCase().trim() : '';
+
+    if (!targetUsername) {
+      return reply.code(400).send({ error: 'Username is required' });
+    }
+
+    try {
+      const targetRes = await pool.query('SELECT id FROM users WHERE LOWER(username) = $1', [targetUsername]);
+      if (targetRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+      const targetId = targetRes.rows[0].id;
+
+      // Delete friendship row
+      const result = await pool.query(
+        `DELETE FROM friendships
+         WHERE user_id_a = $1 AND user_id_b = $2 AND status = 'pending'`,
+        [targetId, user.userId] // targetId is sender, user.userId is receiver (us)
+      );
+
+      if (result.rowCount === 0) {
+        return reply.code(400).send({ error: 'No pending request from this user' });
+      }
+
+      return reply.send({ success: true, message: 'Connection request rejected' });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /users/connections/reject/:username: DB error');
+      return reply.code(500).send({ error: 'Failed to reject connection request' });
+    }
+  });
 }
 
 export async function groupRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
