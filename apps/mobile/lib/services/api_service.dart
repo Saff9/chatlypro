@@ -58,13 +58,7 @@ class ApiService {
     }
   }
 
-  /// Increment the seen counter for a pulse.
-  Future<void> markPulseSeen(String pulseId) async {
-    try {
-      final opts = await _auth();
-      await _dio.post('/pulse/$pulseId/seen', options: opts);
-    } catch (_) {}
-  }
+
 
   // ─── User Search & Profile ───────────────────────────────────────────────────
 
@@ -124,6 +118,66 @@ class ApiService {
     } catch (e) {
       debugPrint('connectToPulseAuthor error: $e');
       return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getGroups() async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.get('/groups', options: opts);
+      final List list = res.data['groups'] ?? [];
+      return list.cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('getGroups error: $e');
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>?> createGroup({
+    required String name,
+    String? description,
+    bool isCampfire = false,
+    int? durationMs,
+  }) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.post(
+        '/groups',
+        data: {
+          'name': name,
+          'description': description ?? '',
+          'isCampfire': isCampfire,
+          'durationMs': durationMs,
+        },
+        options: opts,
+      );
+      return res.data['group'] as Map<String, dynamic>?;
+    } catch (e) {
+      debugPrint('createGroup error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> joinGroup(String groupId) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.post('/groups/$groupId/join', options: opts);
+      return res.statusCode == 200 || res.statusCode == 201;
+    } catch (e) {
+      debugPrint('joinGroup error: $e');
+      return false;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getGroupMessages(String groupId) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.get('/groups/$groupId/messages', options: opts);
+      final List list = res.data['messages'] ?? [];
+      return list.cast<Map<String, dynamic>>();
+    } catch (e) {
+      debugPrint('getGroupMessages error: $e');
+      return [];
     }
   }
 }

@@ -156,4 +156,35 @@ class MessageStorageService {
     } catch (_) {}
     return purged;
   }
+
+  Future<List<MessageData>> getGroupMessages(String groupId) async {
+    try {
+      final box = await Hive.openBox('messages_group_$groupId');
+      final messages = <MessageData>[];
+      for (final val in box.values) {
+        if (val != null) {
+          final data = jsonDecode(val.toString()) as Map<String, dynamic>;
+          messages.add(MessageData.fromJson(data));
+        }
+      }
+      messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      return messages;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> saveGroupMessage(String groupId, MessageData message) async {
+    try {
+      final box = await Hive.openBox('messages_group_$groupId');
+      await box.put(message.id, jsonEncode(message.toJson()));
+    } catch (_) {}
+  }
+
+  Future<void> deleteGroupMessage(String groupId, String messageId) async {
+    try {
+      final box = await Hive.openBox('messages_group_$groupId');
+      await box.delete(messageId);
+    } catch (_) {}
+  }
 }

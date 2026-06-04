@@ -12,7 +12,7 @@ export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPlu
   fastify.get('/', async (request, reply) => {
     try {
       const result = await pool.query(
-        `SELECT id, text, topics, seen_count, replies_count, created_at
+        `SELECT id, text, topics, replies_count, created_at
          FROM pulse_posts
          WHERE created_at > NOW() - INTERVAL '7 days'
          ORDER BY created_at DESC
@@ -46,13 +46,21 @@ export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPlu
         ? topics.split(' ').map(t => t.trim()).filter(Boolean).slice(0, 5)
         : [];
 
-    const newId = crypto.randomUUID();
-
     try {
+      const checkLimit = await pool.query(
+        "SELECT COUNT(*) FROM pulse_posts WHERE author_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
+        [user.userId]
+      );
+      const count = parseInt(checkLimit.rows[0].count, 10);
+      if (count >= 3) {
+        return reply.code(429).send({ error: 'Pulse broadcast limit reached. Maximum 3 posts per 24 hours.' });
+      }
+
+      const newId = crypto.randomUUID();
       const result = await pool.query(
-        `INSERT INTO pulse_posts (id, author_id, text, topics, seen_count, replies_count)
-         VALUES ($1, $2, $3, $4, 0, 0)
-         RETURNING id, text, topics, seen_count, replies_count, created_at`,
+        `INSERT INTO pulse_posts (id, author_id, text, topics, replies_count)
+         VALUES ($1, $2, $3, $4, 0)
+         RETURNING id, text, topics, replies_count, created_at`,
         [newId, user.userId, cleanText, JSON.stringify(topicsArray)]
       );
       return reply.code(201).send({ pulse: result.rows[0] });
@@ -60,24 +68,6 @@ export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPlu
       fastify.log.error(err, 'POST /pulse: DB error');
       return reply.code(503).send({ error: 'Service temporarily unavailable' });
     }
-  });
-
-  // POST /api/pulse/:id/seen — increment seen count (no auth required, fire-and-forget)
-  fastify.post('/:id/seen', async (request, reply) => {
-    const { id } = request.params as any;
-
-    // Validate UUID format to prevent injection
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!UUID_RE.test(id)) {
-      return reply.code(400).send({ error: 'Invalid id' });
-    }
-
-    try {
-      await pool.query('UPDATE pulse_posts SET seen_count = seen_count + 1 WHERE id = $1', [id]);
-    } catch (err: any) {
-      fastify.log.error(err, 'POST /pulse/:id/seen: DB error');
-    }
-    return reply.send({ ok: true });
   });
 
   // POST /api/pulse/:id/connect — request connection with the anonymous author (auth required)
@@ -254,6 +244,179 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
     } catch (err: any) {
       fastify.log.error(err, 'PUT /users/profile: DB error');
       return reply.code(503).send({ error: 'Update failed. Please try again.' });
+    }
+  });
+}
+
+export async function groupRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
+  setInterval(async () => {
+    try {
+      await pool.query('DELETE FROM groups WHERE expires_at IS NOT NULL AND expires_at < NOW()');
+    } catch (_) {}
+  }, 30000);
+
+  fastify.get('/', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const result = await pool.query(
+        `SELECT g.id, g.name, g.description, g.created_by, g.expires_at, g.created_at,
+                (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as members_count
+         FROM groups g
+         JOIN group_members gm ON g.id = gm.group_id
+         WHERE gm.user_id = $1`,
+        [user.userId]
+      );
+      return reply.send({ groups: result.rows });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /groups: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  fastify.post('/', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { name, description, isCampfire, durationMs } = request.body as any;
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+
+    if (!cleanName) {
+      return reply.code(400).send({ error: 'Group name is required' });
+    }
+
+    try {
+      if (!isCampfire) {
+        const checkCreated = await pool.query(
+          'SELECT COUNT(*) FROM groups WHERE created_by = $1 AND expires_at IS NULL',
+          [user.userId]
+        );
+        const createdCount = parseInt(checkCreated.rows[0].count, 10);
+        if (createdCount >= 25) {
+          return reply.code(400).send({ error: 'Maximum permanent groups limit reached (25 groups max).' });
+        }
+      }
+
+      const checkJoined = await pool.query(
+        'SELECT COUNT(*) FROM group_members WHERE user_id = $1',
+        [user.userId]
+      );
+      const joinedCount = parseInt(checkJoined.rows[0].count, 10);
+      if (joinedCount >= 50) {
+        return reply.code(400).send({ error: 'Maximum group memberships limit reached (50 groups max).' });
+      }
+
+      let expiresAt: Date | null = null;
+      if (isCampfire) {
+        const maxDuration = Math.min(Number(durationMs) || 60000, 86400000);
+        expiresAt = new Date(Date.now() + maxDuration);
+      }
+
+      const newId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO groups (id, name, description, created_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [newId, cleanName, description || '', user.userId, expiresAt]
+      );
+
+      await pool.query(
+        `INSERT INTO group_members (group_id, user_id, role)
+         VALUES ($1, $2, 'admin')`,
+        [newId, user.userId]
+      );
+
+      return reply.code(201).send({
+        group: {
+          id: newId,
+          name: cleanName,
+          description,
+          created_by: user.userId,
+          expires_at: expiresAt,
+          members_count: 1,
+        }
+      });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /groups: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  fastify.post('/:id/join', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id } = request.params as any;
+
+    try {
+      const groupRes = await pool.query('SELECT expires_at FROM groups WHERE id = $1', [id]);
+      if (groupRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Group not found or dissolved' });
+      }
+
+      const expiresAt = groupRes.rows[0].expires_at;
+      if (expiresAt && new Date(expiresAt) < new Date()) {
+        return reply.code(404).send({ error: 'Group has been dissolved' });
+      }
+
+      const checkRes = await pool.query(
+        'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+      if (checkRes.rows.length > 0) {
+        return reply.send({ success: true, message: 'Already a member' });
+      }
+
+      const checkJoined = await pool.query(
+        'SELECT COUNT(*) FROM group_members WHERE user_id = $1',
+        [user.userId]
+      );
+      const joinedCount = parseInt(checkJoined.rows[0].count, 10);
+      if (joinedCount >= 50) {
+        return reply.code(400).send({ error: 'Maximum group memberships limit reached (50 groups max).' });
+      }
+
+      await pool.query(
+        `INSERT INTO group_members (group_id, user_id, role)
+         VALUES ($1, $2, 'member')`,
+        [id, user.userId]
+      );
+
+      return reply.send({ success: true });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /groups/:id/join: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  fastify.get('/:id/messages', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id } = request.params as any;
+
+    try {
+      const memberRes = await pool.query(
+        'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+      if (memberRes.rows.length === 0) {
+        return reply.code(403).send({ error: 'Forbidden: You are not a member of this group' });
+      }
+
+      const msgs = await pool.query(
+        `SELECT gm.id, u.username as sender, gm.text, gm.created_at
+         FROM group_messages gm
+         JOIN users u ON gm.sender_id = u.id
+         WHERE gm.group_id = $1
+         ORDER BY gm.created_at ASC
+         LIMIT 100`,
+        [id]
+      );
+      return reply.send({ messages: msgs.rows });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /groups/:id/messages: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
     }
   });
 }

@@ -54,6 +54,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   int? _vaultTimerMs; // null = no expiry
 
   StreamSubscription? _socketSubscription;
+  StreamSubscription? _stateSubscription;
   Timer? _expiryTimer;
   SecretKey? _sharedSessionKey;
   bool _isServiceReady = false;
@@ -248,6 +249,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     }
 
     _socketSubscription = WebSocketService().messageStream.listen(_handleIncomingSocketPayload);
+    _stateSubscription = WebSocketService().stateStream.listen((state) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _handleIncomingSocketPayload(Map<String, dynamic> payload) async {
@@ -1382,6 +1386,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   @override
   void dispose() {
     _socketSubscription?.cancel();
+    _stateSubscription?.cancel();
     _expiryTimer?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
@@ -2156,14 +2161,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                         ),
                         const SizedBox(width: 8),
                         const Expanded(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                Icon(Icons.multitrack_audio_rounded, color: Colors.redAccent, size: 20),
-                              ],
-                            ),
-                          ),
+                          child: _RecordingWaveform(),
                         ),
                       ],
                     ),
@@ -2204,6 +2202,69 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RecordingWaveform extends StatefulWidget {
+  const _RecordingWaveform();
+
+  @override
+  State<_RecordingWaveform> createState() => _RecordingWaveformState();
+}
+
+class _RecordingWaveformState extends State<_RecordingWaveform> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  final List<double> _heights = List.generate(25, (index) => 4.0 + (index % 5) * 4.0);
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 100),
+    )..repeat(reverse: true);
+    
+    _timer = Timer.periodic(const Duration(milliseconds: 120), (timer) {
+      if (mounted) {
+        setState(() {
+          for (int i = 0; i < _heights.length; i++) {
+            _heights[i] = 4.0 + (16.0 * (0.2 + 0.8 * (i % 3 == 0 ? 0.8 : 0.4)));
+            _heights[i] += (DateTime.now().millisecond % 10);
+            _heights[i] = _heights[i].clamp(4.0, 36.0);
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 36,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: _heights.map((h) {
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            width: 3,
+            height: h,
+            margin: const EdgeInsets.symmetric(horizontal: 1.5),
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withValues(alpha: 0.8),
+              borderRadius: BorderRadius.circular(1.5),
+            ),
+          );
+        }).toList(),
       ),
     );
   }

@@ -221,7 +221,7 @@ class SettingsScreen extends ConsumerWidget {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          isSponsor ? 'Chatly Pro Active' : 'Get Chatly Pro',
+                          isSponsor ? 'Active Supporter' : 'Support Chatly',
                           style: const TextStyle(
                             color: Colors.white, 
                             fontWeight: FontWeight.w800, 
@@ -232,16 +232,16 @@ class SettingsScreen extends ConsumerWidget {
                       ],
                     ),
                     Icon(
-                      isSponsor ? Icons.star_rounded : Icons.favorite_rounded,
-                      color: isSponsor ? const Color(0xFFFFB300) : Colors.white.withValues(alpha: 0.9),
+                      isSponsor ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                      color: isSponsor ? const Color(0xFFEF4444) : Colors.white.withValues(alpha: 0.9),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
                 Text(
                   isSponsor
-                      ? 'Thank you for supporting private messaging! Your pro status covers server operations and mesh node relays.'
-                      : 'Unlock premium styling customization and support private messaging. We do not sell user metadata or serve ads.',
+                      ? 'Thank you for sponsoring the project! Your donation directly funds secure WebSocket servers, push notification gateways, and decentralized mesh development.'
+                      : 'Chatly is 100% free, has no ads, and does not harvest metadata. We rely entirely on voluntary support to pay server hosting bills.',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13, height: 1.45),
                 ),
                 const SizedBox(height: 18),
@@ -259,7 +259,7 @@ class SettingsScreen extends ConsumerWidget {
                       _showSupportDialog(context, ref);
                     },
                     child: Text(
-                      isSponsor ? 'Manage Sponsorship' : 'Sponsor & Go Pro',
+                      isSponsor ? 'Manage Sponsorship' : 'Support & Sponsor',
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                   ),
@@ -1206,8 +1206,8 @@ class SettingsScreen extends ConsumerWidget {
           title: Row(
             children: [
               Icon(
-                isSponsor ? Icons.star_rounded : Icons.favorite_rounded,
-                color: isSponsor ? const Color(0xFFF59E0B) : const Color(0xFFEF4444),
+                isSponsor ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                color: const Color(0xFFEF4444),
               ),
               const SizedBox(width: 10),
               Text(isSponsor ? 'Manage Support' : 'Support Chatly'),

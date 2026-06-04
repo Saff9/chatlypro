@@ -167,6 +167,18 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
         relayTypingIndicator(username, String(message.recipientId), !!message.isTyping);
         break;
 
+      case 'group_message':
+        if (!message.groupId || !message.ciphertext) {
+          socket.send(JSON.stringify({ type: 'error', error: 'groupId and ciphertext are required' }));
+          break;
+        }
+        if (typeof message.ciphertext !== 'string' || message.ciphertext.length > 102_400) {
+          socket.send(JSON.stringify({ type: 'error', error: 'ciphertext too large' }));
+          break;
+        }
+        await relayGroupMessage(username, String(message.groupId), String(message.ciphertext));
+        break;
+
       default:
         socket.send(JSON.stringify({ type: 'error', error: `Unknown message type: ${message.type}` }));
     }
@@ -269,5 +281,52 @@ function relayTypingIndicator(senderUsername: string, recipientUsername: string,
   const recipientSocket = activeConnections.get(recipientUsername);
   if (recipientSocket?.readyState === WebSocket.OPEN) {
     recipientSocket.send(JSON.stringify({ type: 'typing', senderId: senderUsername, isTyping }));
+  }
+}
+
+// ─── Relay E2E Encrypted Group Message ──────────────────────────────────────────
+async function relayGroupMessage(senderUsername: string, groupId: string, ciphertext: string) {
+  try {
+    const senderRes = await pool.query('SELECT id FROM users WHERE username = $1', [senderUsername]);
+    if (senderRes.rows.length === 0) return;
+    const senderId = senderRes.rows[0].id;
+
+    await pool.query(
+      'INSERT INTO group_messages (group_id, sender_id, text) VALUES ($1, $2, $3)',
+      [groupId, senderId, ciphertext]
+    );
+
+    const membersRes = await pool.query(
+      'SELECT u.username FROM group_members gm JOIN users u ON gm.user_id = u.id WHERE gm.group_id = $1',
+      [groupId]
+    );
+
+    const payload = {
+      type: 'group_message',
+      groupId,
+      senderId: senderUsername,
+      ciphertext,
+      timestamp: Date.now(),
+    };
+
+    for (const row of membersRes.rows) {
+      const memberUsername = row.username;
+      if (memberUsername === senderUsername) continue;
+
+      const memberSocket = activeConnections.get(memberUsername);
+      if (memberSocket?.readyState === WebSocket.OPEN) {
+        memberSocket.send(JSON.stringify(payload));
+      } else {
+        try {
+          const pushRes = await pool.query('SELECT push_token FROM users WHERE username = $1', [memberUsername]);
+          const pushToken = pushRes.rows[0]?.push_token;
+          if (pushToken) {
+            await sendSilentPush(pushToken, `group-msg-${groupId}-${Date.now()}`);
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (err: any) {
+    console.error('[WS] relayGroupMessage error:', err.message);
   }
 }

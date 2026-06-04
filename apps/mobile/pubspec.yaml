@@ -23,6 +23,7 @@ dependencies:
   # Network
   web_socket_channel: ^2.4.1
   dio: ^5.4.0
+  mobile_scanner: ^5.0.0
 
   # UI & Design
   google_fonts: ^6.1.0

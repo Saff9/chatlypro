@@ -139,6 +139,23 @@ class WebSocketService {
     }
   }
 
+  Future<bool> sendGroupMessage({required String groupId, required String ciphertext}) async {
+    if (_connectionState != SocketConnectionState.connected || _channel == null) {
+      return false;
+    }
+    try {
+      final payload = {
+        'type': 'group_message',
+        'groupId': groupId,
+        'ciphertext': ciphertext,
+      };
+      _channel!.sink.add(jsonEncode(payload));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Automatically flushes queued outbox messages once connection is established
   Future<void> _flushOutboxQueue() async {
     final outboxBox = await Hive.openBox('outbox');

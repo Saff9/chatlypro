@@ -1,29 +1,24 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cryptography/cryptography.dart';
 import '../../../../providers/connection_provider.dart';
-
-class GroupChatMessage {
-  final String sender;
-  final String text;
-  final DateTime time;
-  final bool isMe;
-
-  GroupChatMessage({
-    required this.sender,
-    required this.text,
-    required this.time,
-    required this.isMe,
-  });
-}
+import '../../../../services/api_service.dart';
+import '../../../../services/auth_service.dart';
+import '../../../../services/encryption_service.dart';
+import '../../../../services/message_storage_service.dart';
+import '../../../../services/websocket_service.dart';
+import '../../../chat/data/models/message_model.dart';
 
 class GroupChatScreen extends ConsumerStatefulWidget {
+  final String groupId;
   final String groupName;
   final bool isCampfire;
   final int? expiresAt;
 
   const GroupChatScreen({
     super.key,
+    required this.groupId,
     required this.groupName,
     this.isCampfire = false,
     this.expiresAt,
@@ -37,10 +32,10 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   int _membersCount = 1;
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
-  final List<GroupChatMessage> _messages = [];
+  final List<MessageData> _messages = [];
   Timer? _countdownTimer;
+  StreamSubscription? _socketSubscription;
 
-  // Local word lists for toxicity evaluation (for fun/real local detection)
   final List<String> _toxicKeywords = [
     'hate', 'kill', 'die', 'stupid', 'idiot', 'jerk', 'trash', 
     'garbage', 'fool', 'loser', 'hate you', 'shut up', 'ugly', 'scam'
@@ -49,6 +44,8 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   @override
   void initState() {
     super.initState();
+    _loadLocalMessages();
+    _syncMessages();
 
     if (widget.isCampfire && widget.expiresAt != null) {
       _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -68,6 +65,119 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
         }
       });
     }
+
+    _socketSubscription = WebSocketService().messageStream.listen((payload) async {
+      if (payload['type'] == 'group_message' && payload['groupId'] == widget.groupId) {
+        final sender = payload['senderId']?.toString() ?? '';
+        final ciphertext = payload['ciphertext']?.toString() ?? '';
+        final timestamp = payload['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+        
+        final myUsername = AuthService().username;
+        if (sender == myUsername) return; // Already loaded locally
+
+        final key = await _getGroupKey();
+        final plaintext = await _decrypt(ciphertext, key);
+        
+        final msg = MessageData(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          text: plaintext,
+          isMe: false,
+          sender: sender,
+          time: _formatTimestamp(timestamp),
+          isRead: true,
+          timestamp: timestamp,
+        );
+        
+        await MessageStorageService().saveGroupMessage(widget.groupId, msg);
+        if (mounted) {
+          setState(() {
+            _messages.add(msg);
+          });
+          _scrollToBottom();
+        }
+      }
+    });
+  }
+
+  Future<SecretKey> _getGroupKey() async {
+    final bytes = List<int>.generate(32, (i) {
+      if (i < widget.groupId.length) {
+        return widget.groupId.codeUnitAt(i) ^ 0x5A;
+      }
+      return 0xA5 ^ i;
+    });
+    return SecretKey(bytes);
+  }
+
+  Future<String> _decrypt(String ciphertext, SecretKey key) async {
+    try {
+      return await EncryptionService().decryptMessage(
+        encryptedPacketBase64: ciphertext,
+        secretKey: key,
+      );
+    } catch (_) {
+      return '[Decryption failed]';
+    }
+  }
+
+  Future<String> _encrypt(String plaintext, SecretKey key) async {
+    return await EncryptionService().encryptMessage(
+      plaintext: plaintext,
+      secretKey: key,
+    );
+  }
+
+  String _formatTimestamp(int timestamp) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal();
+    final hour = dt.hour.toString().padLeft(2, '0');
+    final minute = dt.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  Future<void> _loadLocalMessages() async {
+    final localMsgs = await MessageStorageService().getGroupMessages(widget.groupId);
+    if (mounted) {
+      setState(() {
+        _messages.clear();
+        _messages.addAll(localMsgs);
+      });
+      _scrollToBottom();
+    }
+  }
+
+  Future<void> _syncMessages() async {
+    final key = await _getGroupKey();
+    final rawMsgs = await ApiService().getGroupMessages(widget.groupId);
+    final myUsername = AuthService().username;
+    
+    for (final raw in rawMsgs) {
+      final id = raw['id']?.toString() ?? '';
+      final sender = raw['sender']?.toString() ?? '';
+      final ciphertext = raw['text']?.toString() ?? '';
+      final createdAtStr = raw['created_at']?.toString() ?? '';
+      
+      int timestamp = DateTime.now().millisecondsSinceEpoch;
+      try {
+        timestamp = DateTime.parse(createdAtStr).toLocal().millisecondsSinceEpoch;
+      } catch (_) {}
+      
+      final plaintext = await _decrypt(ciphertext, key);
+      final isMe = sender == myUsername;
+      
+      final msg = MessageData(
+        id: id,
+        text: plaintext,
+        isMe: isMe,
+        sender: sender,
+        time: _formatTimestamp(timestamp),
+        isRead: true,
+        timestamp: timestamp,
+      );
+      
+      await MessageStorageService().saveGroupMessage(widget.groupId, msg);
+    }
+    
+    await _loadLocalMessages();
   }
 
   String _getCampfireTimeRemaining() {
@@ -82,17 +192,16 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
 
   @override
   void dispose() {
+    _socketSubscription?.cancel();
     _countdownTimer?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  /// Calculates the group toxicity score based on the sliding window of the last 15 messages.
   double _calculateGroupToxicity() {
     if (_messages.isEmpty) return 0.0;
 
-    // Take the last 15 messages
     final recentMessages = _messages.length > 15 
         ? _messages.sublist(_messages.length - 15) 
         : _messages;
@@ -130,7 +239,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     return normalized;
   }
 
-  /// Evaluates whether a message contains toxic keywords
   bool _isMessageToxic(String text) {
     final normalizedText = _normalizeLeetspeak(text);
     for (final term in _toxicKeywords) {
@@ -141,21 +249,79 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     return false;
   }
 
-  void _handleSendMessage() {
+  void _handleSendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    setState(() {
-      _messages.add(GroupChatMessage(
-        sender: 'You',
-        text: text,
-        time: DateTime.now(),
-        isMe: true,
-      ));
-      _messageController.clear();
-    });
+    if (_isMessageToxic(text)) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF13131B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Colors.white10),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              SizedBox(width: 10),
+              Text('Toxic Content Warning', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: const Text(
+            'Your message contains potentially offensive language. Do you still want to send it?',
+            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Send Anyway', style: TextStyle(color: Colors.orange)),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+    }
 
+    final myUsername = AuthService().username ?? 'Me';
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    
+    final newMessage = MessageData(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      text: text,
+      isMe: true,
+      sender: myUsername,
+      time: _formatTimestamp(timestamp),
+      isRead: true,
+      isSent: false,
+      timestamp: timestamp,
+    );
+
+    _messageController.clear();
+    
+    setState(() {
+      _messages.add(newMessage);
+    });
     _scrollToBottom();
+
+    final key = await _getGroupKey();
+    final ciphertext = await _encrypt(text, key);
+    
+    final wasSent = await WebSocketService().sendGroupMessage(
+      groupId: widget.groupId,
+      ciphertext: ciphertext,
+    );
+    
+    newMessage.isSent = wasSent;
+    await MessageStorageService().saveGroupMessage(widget.groupId, newMessage);
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _scrollToBottom() {
@@ -175,7 +341,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     
-    // Calculate toxicity and map to "Vibe Status"
     final toxicity = _calculateGroupToxicity();
     
     Color vibeColor;
@@ -183,15 +348,15 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     IconData vibeIcon;
 
     if (toxicity <= 0.15) {
-      vibeColor = const Color(0xFF10B981); // Emerald Green
+      vibeColor = const Color(0xFF10B981);
       vibeLabel = 'Chill Vibe • Friendly & Respectful';
       vibeIcon = Icons.sentiment_satisfied_alt_rounded;
     } else if (toxicity <= 0.40) {
-      vibeColor = const Color(0xFFF59E0B); // Amber Orange
+      vibeColor = const Color(0xFFF59E0B);
       vibeLabel = 'Spicy Vibe • Heated Discussions';
       vibeIcon = Icons.sentiment_neutral_rounded;
     } else {
-      vibeColor = const Color(0xFFEF4444); // Crimson Red
+      vibeColor = const Color(0xFFEF4444);
       vibeLabel = 'Toxic Vibe Alert • Spammers/Insults';
       vibeIcon = Icons.sentiment_very_dissatisfied_rounded;
     }
@@ -256,7 +421,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Dynamic Group Vibe Indicator Gauge
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
@@ -303,7 +467,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
               ),
             ),
 
-            // Message Board List
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
@@ -316,7 +479,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
               ),
             ),
 
-            // Text Input Field
             _buildInputBar(theme),
           ],
         ),
@@ -324,7 +486,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     );
   }
 
-  Widget _buildGroupMessageBubble(GroupChatMessage msg, ThemeData theme, bool isDark) {
+  Widget _buildGroupMessageBubble(MessageData msg, ThemeData theme, bool isDark) {
     final isMe = msg.isMe;
     
     if (msg.sender == 'System') {
@@ -364,7 +526,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
               Padding(
                 padding: const EdgeInsets.only(left: 6, bottom: 4),
                 child: Text(
-                  msg.sender,
+                  msg.sender ?? 'Unknown',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -391,12 +553,25 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                     style: TextStyle(color: textColor, fontSize: 14, height: 1.4),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    '${msg.time.hour}:${msg.time.minute.toString().padLeft(2, "0")}',
-                    style: TextStyle(
-                      color: isMe ? Colors.white60 : Colors.black45,
-                      fontSize: 8,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        msg.time,
+                        style: TextStyle(
+                          color: isMe ? Colors.white60 : Colors.black45,
+                          fontSize: 8,
+                        ),
+                      ),
+                      if (isMe) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          msg.isSent ? Icons.done_all : Icons.access_time,
+                          size: 10,
+                          color: Colors.white60,
+                        ),
+                      ]
+                    ],
                   ),
                 ],
               ),
@@ -483,19 +658,25 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                         ),
                         title: Text(contact, style: const TextStyle(color: Colors.white)),
                         trailing: const Icon(Icons.send_rounded, color: Color(0xFF8083FF)),
-                        onTap: () {
+                        onTap: () async {
                           setState(() {
                             _messages.add(
-                              GroupChatMessage(
-                                sender: 'System',
+                              MessageData(
+                                id: DateTime.now().microsecondsSinceEpoch.toString(),
                                 text: 'You invited @$contact to the group.',
-                                time: DateTime.now(),
                                 isMe: true,
+                                sender: 'System',
+                                time: _formatTimestamp(DateTime.now().millisecondsSinceEpoch),
+                                timestamp: DateTime.now().millisecondsSinceEpoch,
                               ),
                             );
                             _membersCount++;
                           });
                           Navigator.of(context).pop();
+                          
+                          // Call Api to invite/join
+                          await ApiService().joinGroup(widget.groupId); // simulate invite join for this demo user
+                          
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text('Invited @$contact to this group room.'),
@@ -545,7 +726,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
               const SizedBox(height: 10),
               _buildInfoRow('Discovery Mode', 'Invite-Only / Secure Handshake'),
               _buildInfoRow('Total Members', '$_membersCount members'),
-              _buildInfoRow('Max Create Limit', '10 groups per user'),
+              _buildInfoRow('Max Create Limit', '25 groups per user'),
               _buildInfoRow('Max Join Limit', '50 groups per user'),
             ],
           ),

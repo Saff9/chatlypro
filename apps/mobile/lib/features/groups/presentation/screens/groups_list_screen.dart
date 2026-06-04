@@ -13,14 +13,13 @@ class GroupsListScreen extends ConsumerStatefulWidget {
 
 class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
   Timer? _campfireTimer;
-
-  // Groups are populated as the user creates or joins them.
-  // Starting with an empty list is the correct production behavior.
   final List<GroupItemData> _groups = [];
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
+    _loadGroups();
     _campfireTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -51,6 +50,63 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
         }
       }
     });
+  }
+
+  Future<void> _loadGroups() async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
+    final raw = await ApiService().getGroups();
+    final List<GroupItemData> temp = [];
+    for (final g in raw) {
+      final String id = g['id'] ?? '';
+      final String name = g['name'] ?? '';
+      final String desc = g['description'] ?? '';
+      final int membersCount = int.tryParse(g['members_count']?.toString() ?? '1') ?? 1;
+      
+      final expiresAtStr = g['expires_at'];
+      int? expiresAt;
+      bool isCampfire = false;
+      String? durationLabel;
+
+      if (expiresAtStr != null) {
+        try {
+          final dt = DateTime.parse(expiresAtStr.toString()).toLocal();
+          expiresAt = dt.millisecondsSinceEpoch;
+          isCampfire = true;
+          final diff = dt.difference(DateTime.now());
+          if (diff.inMinutes <= 2) {
+            durationLabel = '1m';
+          } else if (diff.inHours <= 2) {
+            durationLabel = '1h';
+          } else if (diff.inHours <= 13) {
+            durationLabel = '12h';
+          } else {
+            durationLabel = '24h';
+          }
+        } catch (_) {}
+      }
+
+      temp.add(GroupItemData(
+        id: id,
+        name: name,
+        description: desc,
+        membersCount: membersCount,
+        lastMessage: isCampfire ? 'Campfire active.' : 'Start group chat.',
+        time: 'Now',
+        healthScore: 1.0,
+        isCampfire: isCampfire,
+        expiresAt: expiresAt,
+        campfireDurationLabel: durationLabel,
+      ));
+    }
+
+    if (mounted) {
+      setState(() {
+        _groups.clear();
+        _groups.addAll(temp);
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -104,7 +160,9 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
           ),
           
            Expanded(
-            child: _groups.isEmpty
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _groups.isEmpty
                 ? Center(
                     child: Padding(
                       padding: const EdgeInsets.all(32.0),
@@ -191,12 +249,13 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => GroupChatScreen(
+                            groupId: group.id,
                             groupName: group.name,
                             isCampfire: group.isCampfire,
                             expiresAt: group.expiresAt,
                           ),
                         ),
-                      );
+                      ).then((_) => _loadGroups());
                     }
                   },
                   leading: CircleAvatar(
@@ -292,7 +351,8 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
     final nameController = TextEditingController();
     final descController = TextEditingController();
     bool isCampfire = false;
-    int campfireDurationMs = 60000; // Default: 1 minute (Test Mode)
+    int campfireDurationMs = 3600000;
+    bool creating = false;
 
     showModalBottomSheet(
       context: context,
@@ -327,7 +387,7 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                     ],
                   ),
                   const Text(
-                    'Limit: Create up to 10 groups, join up to 50. Discovery is strictly invite-only via secure QR codes or direct contacts.',
+                    'Limit: Create up to 25 groups, join up to 50. Discovery is strictly invite-only via secure QR codes or direct contacts.',
                     style: TextStyle(fontSize: 10, color: Colors.white38, height: 1.3),
                   ),
                   const SizedBox(height: 12),
@@ -382,14 +442,13 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                       ),
                       style: const TextStyle(color: Colors.white, fontSize: 13),
                       items: const [
-                        DropdownMenuItem(value: 60000, child: Text('1 Minute')),
                         DropdownMenuItem(value: 3600000, child: Text('1 Hour')),
                         DropdownMenuItem(value: 43200000, child: Text('12 Hours')),
                         DropdownMenuItem(value: 86400000, child: Text('24 Hours')),
                       ],
                       onChanged: (val) {
                         dialogSetState(() {
-                          campfireDurationMs = val ?? 60000;
+                          campfireDurationMs = val ?? 3600000;
                         });
                       },
                     ),
@@ -401,43 +460,52 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
-                    onPressed: () {
-                      final name = nameController.text.trim();
-                      if (name.isNotEmpty) {
-                        final now = DateTime.now().millisecondsSinceEpoch;
-                        final int? expiresAt = isCampfire ? now + campfireDurationMs : null;
-                        String? durationLabel;
-                        if (isCampfire) {
-                          if (campfireDurationMs == 60000) durationLabel = '1m';
-                          if (campfireDurationMs == 3600000) durationLabel = '1h';
-                          if (campfireDurationMs == 43200000) durationLabel = '12h';
-                          if (campfireDurationMs == 86400000) durationLabel = '24h';
-                        }
+                    onPressed: creating
+                        ? null
+                        : () async {
+                            final name = nameController.text.trim();
+                            if (name.isEmpty) return;
 
-                        setState(() {
-                          _groups.add(GroupItemData(
-                            name: name,
-                            membersCount: 1,
-                            lastMessage: 'You created the group.',
-                            time: 'Now',
-                            healthScore: 1.0,
-                            isCampfire: isCampfire,
-                            expiresAt: expiresAt,
-                            campfireDurationLabel: durationLabel,
-                          ));
-                        });
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(isCampfire
-                                ? 'Campfire Group "$name" created (auto-dissolves in $durationLabel).'
-                                : 'Group "$name" created room.'),
-                            backgroundColor: const Color(0xFF10B981),
-                          ),
-                        );
-                      }
-                    },
-                    child: const Text('Create Room', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                            dialogSetState(() => creating = true);
+                            final desc = descController.text.trim();
+
+                            final res = await ApiService().createGroup(
+                              name: name,
+                              description: desc,
+                              isCampfire: isCampfire,
+                              durationMs: isCampfire ? campfireDurationMs : null,
+                            );
+
+                            if (res != null) {
+                              await _loadGroups();
+                              if (context.mounted) {
+                                Navigator.of(context).pop();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Group "$name" created successfully.'),
+                                    backgroundColor: const Color(0xFF10B981),
+                                  ),
+                                );
+                              }
+                            } else {
+                              dialogSetState(() => creating = false);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Failed to create group. Check limits or connection.'),
+                                    backgroundColor: Color(0xFFEF4444),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                    child: creating
+                        ? const SizedBox(
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          )
+                        : const Text('Create Room', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -454,7 +522,9 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
 }
 
 class GroupItemData {
+  final String id;
   final String name;
+  final String description;
   final int membersCount;
   final String lastMessage;
   final String time;
@@ -464,7 +534,9 @@ class GroupItemData {
   final String? campfireDurationLabel;
 
   GroupItemData({
+    required this.id,
     required this.name,
+    required this.description,
     required this.membersCount,
     required this.lastMessage,
     required this.time,

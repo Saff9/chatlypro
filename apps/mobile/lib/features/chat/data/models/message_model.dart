@@ -22,6 +22,7 @@ class MessageData {
   final bool isVoice;
   final int? voiceDuration;
   final String? voiceTranscript;
+  final String? sender;
 
   MessageData({
     required this.id,
@@ -39,6 +40,7 @@ class MessageData {
     this.isVoice = false,
     this.voiceDuration,
     this.voiceTranscript,
+    this.sender,
   }) : reactions = reactions ?? {};
 
   Map<String, dynamic> toJson() {
@@ -58,6 +60,7 @@ class MessageData {
       'isVoice': isVoice,
       'voiceDuration': voiceDuration,
       'voiceTranscript': voiceTranscript,
+      'sender': sender,
     };
   }
 
@@ -87,6 +90,7 @@ class MessageData {
       isVoice: json['isVoice'] as bool? ?? false,
       voiceDuration: json['voiceDuration'] as int?,
       voiceTranscript: json['voiceTranscript'] as String?,
+      sender: json['sender'] as String?,
     );
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../../services/message_storage_service.dart';
 import '../../../../services/websocket_service.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -607,7 +608,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                             MaterialPageRoute(
                               builder: (context) => ChatScreen(chatData: chat),
                             ),
-                          );
+                          ).then((_) => _loadChats());
                         }
                       },
                       contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: verticalPadding),
@@ -821,29 +822,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (isScanning) ...[
-                      // Simulated Camera Viewfinder
-                      Container(
-                        height: 180,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: theme.primaryColor.withValues(alpha: 0.3)),
-                        ),
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            const Text('[ Viewfinder Feed Active ]', style: TextStyle(color: Colors.white24, fontSize: 12)),
-                            // Moving Laser Animation
-                            _MovingLaserLine(),
-                            // Corner markers
-                            Positioned(top: 10, left: 10, child: Icon(Icons.crop_free_rounded, color: theme.primaryColor, size: 24)),
-                            Positioned(top: 10, right: 10, child: Transform.rotate(angle: 1.5708, child: Icon(Icons.crop_free_rounded, color: theme.primaryColor, size: 24))),
-                            Positioned(bottom: 10, left: 10, child: Transform.rotate(angle: -1.5708, child: Icon(Icons.crop_free_rounded, color: theme.primaryColor, size: 24))),
-                            Positioned(bottom: 10, right: 10, child: Transform.rotate(angle: 3.1415, child: Icon(Icons.crop_free_rounded, color: theme.primaryColor, size: 24))),
-                          ],
-                        ),
-                      ),
+                      _QRScannerWidget(onScan: simulateScan),
                       const SizedBox(height: 16),
                       const Text(
                         'Align QR code inside the viewfinder to establish secure X25519 keys.',
@@ -1067,6 +1046,66 @@ class _MovingLaserLineState extends State<_MovingLaserLine> with SingleTickerPro
           ),
         );
       },
+    );
+  }
+}
+
+class _QRScannerWidget extends StatefulWidget {
+  final Function(String) onScan;
+
+  const _QRScannerWidget({required this.onScan});
+
+  @override
+  State<_QRScannerWidget> createState() => _QRScannerWidgetState();
+}
+
+class _QRScannerWidgetState extends State<_QRScannerWidget> {
+  final MobileScannerController _controller = MobileScannerController(
+    detectionSpeed: DetectionSpeed.noDuplicates,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 180,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).primaryColor.withValues(alpha: 0.3)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            MobileScanner(
+              controller: _controller,
+              onDetect: (capture) {
+                final List<Barcode> barcodes = capture.barcodes;
+                for (final barcode in barcodes) {
+                  final rawValue = barcode.rawValue;
+                  if (rawValue != null && rawValue.isNotEmpty) {
+                    widget.onScan(rawValue);
+                    break;
+                  }
+                }
+              },
+            ),
+            _MovingLaserLine(),
+            Positioned(top: 10, left: 10, child: Icon(Icons.crop_free_rounded, color: Theme.of(context).primaryColor, size: 24)),
+            Positioned(top: 10, right: 10, child: Transform.rotate(angle: 1.5708, child: Icon(Icons.crop_free_rounded, color: Theme.of(context).primaryColor, size: 24))),
+            Positioned(bottom: 10, left: 10, child: Transform.rotate(angle: -1.5708, child: Icon(Icons.crop_free_rounded, color: Theme.of(context).primaryColor, size: 24))),
+            Positioned(bottom: 10, right: 10, child: Transform.rotate(angle: 3.1415, child: Icon(Icons.crop_free_rounded, color: Theme.of(context).primaryColor, size: 24))),
+          ],
+        ),
+      ),
     );
   }
 }

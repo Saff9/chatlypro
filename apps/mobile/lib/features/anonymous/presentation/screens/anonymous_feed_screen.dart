@@ -10,7 +10,6 @@ class AnonymousFeedScreen extends StatefulWidget {
 
 class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
   final List<PulseItemData> _pulses = [];
-  final Set<String> _seenPulseIds = {};
   bool _loading = true;
 
   @override
@@ -51,7 +50,6 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
           id: p['id'] ?? '',
           text: p['text'] ?? '',
           topics: topics,
-          seenCount: (p['seen_count'] ?? 0) as int,
           repliesCount: (p['replies_count'] ?? 0) as int,
           timeLeft: _calculateTimeLeft(p['created_at']),
         ));
@@ -80,7 +78,6 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
       ),
       body: Column(
         children: [
-          // Banner
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Container(
@@ -102,7 +99,7 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                           'Anonymous Pulse Feed',
+                          'Anonymous Pulse Feed',
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         const SizedBox(height: 2),
@@ -118,7 +115,6 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
             ),
           ),
 
-          // Feed list
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -164,11 +160,6 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
                           itemCount: _pulses.length,
                           itemBuilder: (context, index) {
                             final pulse = _pulses[index];
-                            // Mark as seen once per app session to avoid storming the API
-                            if (!_seenPulseIds.contains(pulse.id)) {
-                              _seenPulseIds.add(pulse.id);
-                              ApiService().markPulseSeen(pulse.id);
-                            }
                             return _buildPulseCard(pulse, theme);
                           },
                         ),
@@ -227,12 +218,6 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.remove_red_eye_outlined, size: 16,
-                        color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6)),
-                    const SizedBox(width: 6),
-                    Text('${pulse.seenCount} seen',
-                        style: TextStyle(fontSize: 12, color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6))),
-                    const SizedBox(width: 16),
                     Icon(Icons.chat_bubble_outline_rounded, size: 16,
                         color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6)),
                     const SizedBox(width: 6),
@@ -384,12 +369,25 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
                     ? null
                     : () async {
                         final text = textController.text.trim();
-                        if (text.isEmpty) return;
+                        if (text.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Pulse message cannot be empty.'), backgroundColor: Colors.redAccent),
+                          );
+                          return;
+                        }
+                        if (text.length > 200) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Pulse message exceeds 200 characters limit.'), backgroundColor: Colors.redAccent),
+                          );
+                          return;
+                        }
+
                         final topics = topicsController.text
                             .trim()
                             .split(' ')
                             .where((t) => t.isNotEmpty)
                             .toList();
+                        
                         setModalState(() => posting = true);
                         final ok = await ApiService().createPulse(text: text, topics: topics);
                         if (context.mounted) {
@@ -397,7 +395,8 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                             content: Text(ok
                                 ? 'Anonymous pulse broadcasted! 🔥'
-                                : 'Failed to post. Please try again.'),
+                                : 'Failed to post. Max 3 pulses per 24 hours.'),
+                            backgroundColor: ok ? const Color(0xFF10B981) : const Color(0xFFEF4444),
                           ));
                         }
                         if (ok) await _loadPulses();
@@ -411,7 +410,10 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
           ),
         ),
       ),
-    );
+    ).then((_) {
+      textController.dispose();
+      topicsController.dispose();
+    });
   }
 }
 
@@ -419,7 +421,6 @@ class PulseItemData {
   final String id;
   final String text;
   final List<String> topics;
-  final int seenCount;
   final int repliesCount;
   final String timeLeft;
 
@@ -427,7 +428,6 @@ class PulseItemData {
     required this.id,
     required this.text,
     required this.topics,
-    required this.seenCount,
     required this.repliesCount,
     required this.timeLeft,
   });

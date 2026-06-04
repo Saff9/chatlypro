@@ -27,10 +27,8 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     
-    // Register active use right away
     DeadMansSwitchService().updateLastActive();
 
-    // Enable shake-to-burn panic trigger gesture
     ShakeService().startListening(() {
       if (mounted) {
         Navigator.of(context).pushReplacement(
@@ -59,7 +57,6 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
     final theme = Theme.of(context);
     final tabOrder = ref.watch(tabOrderProvider);
 
-    // Map keys to their respective Screen widgets
     Widget getScreen(String key) {
       switch (key) {
         case 'chats':
@@ -75,37 +72,36 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
       }
     }
 
-    // Map keys to their NavigationDestination elements
     NavigationDestination getDestination(String key) {
       switch (key) {
         case 'chats':
           return NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline_rounded, color: theme.textTheme.bodyMedium?.color),
-            selectedIcon: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF6366F1)),
+            icon: Icon(Icons.chat_bubble_outline_rounded, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF6366F1), size: 20),
             label: 'Chats',
           );
         case 'groups':
           return NavigationDestination(
-            icon: Icon(Icons.groups_outlined, color: theme.textTheme.bodyMedium?.color),
-            selectedIcon: const Icon(Icons.groups_rounded, color: Color(0xFF6366F1)),
+            icon: Icon(Icons.groups_outlined, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(Icons.groups_rounded, color: Color(0xFF6366F1), size: 20),
             label: 'Groups',
           );
         case 'pulse':
           return NavigationDestination(
-            icon: Icon(Icons.masks_outlined, color: theme.textTheme.bodyMedium?.color),
-            selectedIcon: const Icon(Icons.masks_rounded, color: Color(0xFFF59E0B)),
+            icon: Icon(Icons.masks_outlined, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(Icons.masks_rounded, color: Color(0xFFF59E0B), size: 20),
             label: 'Pulse',
           );
         case 'settings':
           return NavigationDestination(
-            icon: Icon(Icons.settings_outlined, color: theme.textTheme.bodyMedium?.color),
-            selectedIcon: const Icon(Icons.settings_rounded, color: Color(0xFF10B981)),
+            icon: Icon(Icons.settings_outlined, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(Icons.settings_rounded, color: Color(0xFF10B981), size: 20),
             label: 'Settings',
           );
         default:
           return NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline_rounded, color: theme.textTheme.bodyMedium?.color),
-            selectedIcon: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF6366F1)),
+            icon: Icon(Icons.chat_bubble_outline_rounded, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF6366F1), size: 20),
             label: 'Chats',
           );
       }
@@ -114,7 +110,6 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
     final screens = tabOrder.map((key) => getScreen(key)).toList();
     final destinations = tabOrder.map((key) => getDestination(key)).toList();
 
-    // Prevent index out of bounds if tab order changes or indexing is off
     if (_currentIndex >= screens.length) {
       _currentIndex = 0;
     }
@@ -129,7 +124,13 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
       if (selectedChat != null) {
         rightPane = ChatScreen(key: ValueKey('chat_${selectedChat.username}'), chatData: selectedChat);
       } else if (selectedGroup != null) {
-        rightPane = GroupChatScreen(key: ValueKey('group_${selectedGroup.name}'), groupName: selectedGroup.name);
+        rightPane = GroupChatScreen(
+          key: ValueKey('group_${selectedGroup.id}'),
+          groupId: selectedGroup.id,
+          groupName: selectedGroup.name,
+          isCampfire: selectedGroup.isCampfire,
+          expiresAt: selectedGroup.expiresAt,
+        );
       } else {
         rightPane = Scaffold(
           backgroundColor: theme.scaffoldBackgroundColor,
@@ -187,18 +188,26 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
                   borderRadius: BorderRadius.circular(24),
                   child: BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                    child: NavigationBar(
-                      selectedIndex: _currentIndex,
-                      onDestinationSelected: (index) {
-                        setState(() {
-                          _currentIndex = index;
-                        });
-                      },
-                      backgroundColor: theme.cardColor.withValues(alpha: 0.8),
-                      elevation: 0,
-                      indicatorColor: theme.primaryColor.withValues(alpha: 0.15),
-                      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-                      destinations: destinations,
+                    child: NavigationBarTheme(
+                      data: NavigationBarThemeData(
+                        labelTextStyle: WidgetStateProperty.all(
+                          const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      child: NavigationBar(
+                        height: 58.0,
+                        selectedIndex: _currentIndex,
+                        onDestinationSelected: (index) {
+                          setState(() {
+                            _currentIndex = index;
+                          });
+                        },
+                        backgroundColor: theme.cardColor.withValues(alpha: 0.8),
+                        elevation: 0,
+                        indicatorColor: theme.primaryColor.withValues(alpha: 0.15),
+                        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                        destinations: destinations,
+                      ),
                     ),
                   ),
                 ),
@@ -233,18 +242,26 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
           borderRadius: BorderRadius.circular(24),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-            child: NavigationBar(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (index) {
-                setState(() {
-                  _currentIndex = index;
-                });
-              },
-              backgroundColor: theme.cardColor.withValues(alpha: 0.8),
-              elevation: 0,
-              indicatorColor: theme.primaryColor.withValues(alpha: 0.15),
-              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-              destinations: destinations,
+            child: NavigationBarTheme(
+              data: NavigationBarThemeData(
+                labelTextStyle: WidgetStateProperty.all(
+                  const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
+                ),
+              ),
+              child: NavigationBar(
+                height: 58.0,
+                selectedIndex: _currentIndex,
+                onDestinationSelected: (index) {
+                  setState(() {
+                    _currentIndex = index;
+                  });
+                },
+                backgroundColor: theme.cardColor.withValues(alpha: 0.8),
+                elevation: 0,
+                indicatorColor: theme.primaryColor.withValues(alpha: 0.15),
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                destinations: destinations,
+              ),
             ),
           ),
         ),

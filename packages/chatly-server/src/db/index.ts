@@ -137,8 +137,11 @@ const SCHEMA_SQL = `
     description VARCHAR(255) DEFAULT '',
     created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
     max_members INT DEFAULT 25,
+    expires_at  TIMESTAMP,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
+
+  ALTER TABLE groups ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
 
   CREATE TABLE IF NOT EXISTS group_members (
     group_id   UUID REFERENCES groups(id) ON DELETE CASCADE,
@@ -148,16 +151,24 @@ const SCHEMA_SQL = `
     PRIMARY KEY (group_id, user_id)
   );
 
+  CREATE TABLE IF NOT EXISTS group_messages (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id   UUID REFERENCES groups(id) ON DELETE CASCADE,
+    sender_id  UUID REFERENCES users(id) ON DELETE CASCADE,
+    text       TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS pulse_posts (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     author_id     UUID REFERENCES users(id) ON DELETE CASCADE,
     text          VARCHAR(200) NOT NULL,
     topics        JSONB DEFAULT '[]',
-    seen_count    INT DEFAULT 0,
     replies_count INT DEFAULT 0,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
+  ALTER TABLE pulse_posts DROP COLUMN IF EXISTS seen_count;
   DELETE FROM pulse_posts WHERE created_at < NOW() - INTERVAL '7 days';
 `;
 
