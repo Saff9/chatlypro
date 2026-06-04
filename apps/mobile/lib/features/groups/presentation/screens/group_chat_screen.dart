@@ -665,6 +665,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                                 id: DateTime.now().microsecondsSinceEpoch.toString(),
                                 text: 'You invited @$contact to the group.',
                                 isMe: true,
+                                isRead: true,
                                 sender: 'System',
                                 time: _formatTimestamp(DateTime.now().millisecondsSinceEpoch),
                                 timestamp: DateTime.now().millisecondsSinceEpoch,
