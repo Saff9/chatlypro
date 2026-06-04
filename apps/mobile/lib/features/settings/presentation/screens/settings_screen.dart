@@ -2786,15 +2786,15 @@ class SettingsScreen extends ConsumerWidget {
                             int score = 0;
                             if (latestTimestamp > 0) {
                               final diffMs = DateTime.now().millisecondsSinceEpoch - latestTimestamp;
-                              final oneDayMs = 24 * 60 * 60 * 1000;
-                              final sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+                              const oneDayMs = 24 * 60 * 60 * 1000;
+                              const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
                               
                               if (diffMs < oneDayMs) {
                                 score = 90 + ((oneDayMs - diffMs) * 10 ~/ oneDayMs); // 90-100% if < 24h
                               } else if (diffMs < sevenDaysMs) {
                                 score = 40 + ((sevenDaysMs - diffMs) * 50 ~/ sevenDaysMs); // 40-90% if < 7d
                               } else {
-                                final thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+                                const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
                                 if (diffMs < thirtyDaysMs) {
                                   score = 10 + ((thirtyDaysMs - diffMs) * 30 ~/ thirtyDaysMs); // 10-40% if < 30d
                                 } else {

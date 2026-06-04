@@ -328,11 +328,4 @@ class AuthService {
     _userId = null;
     _username = null;
   }
-
-  /// SHA-256 hash of the password string for offline verification.
-  String _hashPassword(String password) {
-    final bytes = utf8.encode(password);
-    final digest = sha256.convert(bytes);
-    return digest.toString();
-  }
 }

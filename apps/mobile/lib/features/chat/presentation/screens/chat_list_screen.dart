@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../../services/message_storage_service.dart';
 import '../../../../services/websocket_service.dart';
