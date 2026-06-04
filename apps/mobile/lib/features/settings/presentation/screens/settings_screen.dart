@@ -1372,46 +1372,6 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildDonationTile(
-    BuildContext context,
-    WidgetRef ref, {
-    required String title,
-    required String price,
-    required IconData icon,
-    required Color color,
-  }) {
-    return ListTile(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
-      ),
-      leading: Icon(icon, color: color),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-      trailing: Text(
-        price,
-        style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13),
-      ),
-      onTap: () async {
-        await ref.read(sponsorshipProvider.notifier).setSponsorStatus(true);
-        if (context.mounted) {
-          Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.favorite_rounded, color: Colors.white, size: 16),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text('Thank you! You are now a "$title" sponsor.')),
-                ],
-              ),
-              backgroundColor: const Color(0xFF10B981),
-            ),
-          );
-        }
-      },
-    );
-  }
-
   void _showCryptoDonationDialog(BuildContext context, WidgetRef ref) {
     showDialog(
       context: context,

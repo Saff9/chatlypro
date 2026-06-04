@@ -678,6 +678,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                           // Call Api to invite/join
                           await ApiService().joinGroup(widget.groupId); // simulate invite join for this demo user
                           
+                          if (!context.mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               content: Text('Invited @$contact to this group room.'),
