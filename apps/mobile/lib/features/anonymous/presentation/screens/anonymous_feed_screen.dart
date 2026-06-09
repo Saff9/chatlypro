@@ -169,11 +169,12 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
       ),
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 80.0),
-        child: FloatingActionButton.extended(
+        child: FloatingActionButton(
+          mini: true,
           onPressed: () => _showCreatePulseSheet(context, theme),
           backgroundColor: const Color(0xFFF59E0B),
-          icon: const Icon(Icons.add_rounded, color: Colors.white),
-          label: const Text('Broadcast Pulse', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          tooltip: 'Broadcast Pulse',
+          child: const Icon(Icons.add_rounded, color: Colors.white, size: 20),
         ),
       ),
     );
@@ -218,12 +219,6 @@ class _AnonymousFeedScreenState extends State<AnonymousFeedScreen> {
               children: [
                 Row(
                   children: [
-                    Icon(Icons.chat_bubble_outline_rounded, size: 16,
-                        color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6)),
-                    const SizedBox(width: 6),
-                    Text('${pulse.repliesCount} replies',
-                        style: TextStyle(fontSize: 12, color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6))),
-                    const SizedBox(width: 16),
                     Icon(Icons.access_time_rounded, size: 16,
                         color: theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6)),
                     const SizedBox(width: 6),

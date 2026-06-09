@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../services/p2p_mesh_service.dart';
 
 class P2PChatScreen extends StatefulWidget {
@@ -72,13 +73,10 @@ class _P2PChatScreenState extends State<P2PChatScreen> {
               const SizedBox(width: 4),
               const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
               const SizedBox(width: 4),
-              CircleAvatar(
+              BeautifulAvatar(
+                name: widget.peer.username,
+                username: widget.peer.username,
                 radius: 18,
-                backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.15),
-                child: Text(
-                  widget.peer.username[0].toUpperCase(),
-                  style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold),
-                ),
               ),
             ],
           ),

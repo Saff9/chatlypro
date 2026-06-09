@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'group_chat_screen.dart';
+import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../providers/layout_provider.dart';
 import '../../../../services/api_service.dart';
 
@@ -259,13 +260,10 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                       ).then((_) => _loadGroups());
                     }
                   },
-                  leading: CircleAvatar(
+                  leading: BeautifulAvatar(
+                    name: group.name,
+                    username: group.id,
                     radius: 28,
-                    backgroundColor: theme.primaryColor.withValues(alpha: 0.08),
-                    child: Text(
-                      group.name[0],
-                      style: TextStyle(color: theme.primaryColor, fontWeight: FontWeight.bold, fontSize: 18),
-                    ),
                   ),
                   title: Row(
                     children: [
@@ -338,11 +336,12 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
       ),
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 80.0),
-        child: FloatingActionButton.extended(
+        child: FloatingActionButton(
+          mini: true,
           onPressed: () => _showCreateGroupDialog(context, theme),
           backgroundColor: theme.primaryColor,
-          icon: const Icon(Icons.group_add_rounded, color: Colors.white),
-          label: const Text('New Group', style: TextStyle(color: Colors.white)),
+          tooltip: 'New Group',
+          child: const Icon(Icons.group_add_rounded, color: Colors.white, size: 20),
         ),
       ),
     );

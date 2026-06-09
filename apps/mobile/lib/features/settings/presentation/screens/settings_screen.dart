@@ -11,6 +11,7 @@ import '../../../../providers/theme_provider.dart';
 import '../../../../providers/wallpaper_provider.dart';
 import '../../../../providers/connection_provider.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
+import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../services/auth_service.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -93,28 +94,25 @@ class SettingsScreen extends ConsumerWidget {
                             colors: [theme.primaryColor, const Color(0xFF494BD6)],
                           ),
                         ),
-                        child: CircleAvatar(
-                          radius: 34,
-                          backgroundColor: const Color(0xFF13131B),
-                          child: avatarUrl.isNotEmpty
-                              ? ClipOval(
-                                  child: Image.network(
-                                    avatarUrl,
-                                    width: 68,
-                                    height: 68,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (c, e, s) => const Icon(Icons.face_rounded, color: Colors.white60),
-                                  ),
-                                )
-                              : Text(
-                                  displayName.isNotEmpty ? displayName[0].toUpperCase() : 'U',
-                                  style: TextStyle(
-                                    fontSize: 26,
-                                    color: theme.primaryColor,
-                                    fontWeight: FontWeight.bold,
+                        child: avatarUrl.isNotEmpty
+                            ? ClipOval(
+                                child: Image.network(
+                                  avatarUrl,
+                                  width: 68,
+                                  height: 68,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (c, e, s) => BeautifulAvatar(
+                                    name: displayName,
+                                    username: username,
+                                    radius: 34,
                                   ),
                                 ),
-                        ),
+                              )
+                            : BeautifulAvatar(
+                                name: displayName,
+                                username: username,
+                                radius: 34,
+                              ),
                       ),
                     ),
                     const SizedBox(width: 20),
@@ -548,7 +546,7 @@ class SettingsScreen extends ConsumerWidget {
                 ListTile(
                   leading: Icon(Icons.info_outline_rounded, color: iconColor),
                   title: Text('Version Info', style: TextStyle(color: textColor)),
-                  subtitle: Text('Chatly v1.0.0 (E2E Pro)', style: TextStyle(color: subColor.withValues(alpha: 0.5))),
+                  subtitle: Text('Chatly v1.0.0', style: TextStyle(color: subColor.withValues(alpha: 0.5))),
                 ),
                 Divider(height: 1, indent: 60, color: Colors.white.withValues(alpha: 0.05)),
                 ListTile(
@@ -1225,72 +1223,47 @@ class SettingsScreen extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                isSponsor
-                    ? 'Thank you for sponsoring the project! You can update your support or opt-out at any time below.'
-                    : 'Since we never show ads or sell data, Chatly is 100% powered by user sponsorships. Help cover secure server costs and release fees to publish to Google Play & Apple App Store.',
-                style: const TextStyle(fontSize: 12, height: 1.45, color: Colors.white70),
+              const Text(
+                'Since we never show ads or sell data, Chatly is 100% powered by user sponsorships. Help cover secure server costs and release fees to publish to Google Play & Apple App Store.',
+                style: TextStyle(fontSize: 12, height: 1.45, color: Colors.white70),
               ),
               const SizedBox(height: 20),
-              if (!isSponsor) ...[
-                _buildRazorpayDonationTile(
-                  context,
-                  ref,
-                  title: 'Server Supporter',
-                  description: 'Keep secure WebSocket servers running 24/7.',
-                  price: '₹199 once',
-                  url: 'https://razorpay.me/@CodeChap?amount=KxK8ikz%2BGFZ8lMDydVeeuA%3D%3D',
-                  icon: Icons.dns_rounded,
-                  color: const Color(0xFF10B981),
+              _buildRazorpayDonationTile(
+                context,
+                ref,
+                title: 'Server Supporter',
+                description: 'Keep secure WebSocket servers running 24/7.',
+                price: '₹199 once',
+                url: 'https://razorpay.me/@CodeChap?amount=KxK8ikz%2BGFZ8lMDydVeeuA%3D%3D',
+                icon: Icons.dns_rounded,
+                color: const Color(0xFF10B981),
+              ),
+              const SizedBox(height: 10),
+              _buildRazorpayDonationTile(
+                context,
+                ref,
+                title: 'App Store Publisher',
+                description: 'Fund Play Store & App Store developer fees.',
+                price: '₹299 once',
+                url: 'https://razorpay.me/@CodeChap?amount=kXxURMaXFk%2Bmrv%2B9uGrYpg%3D%3D',
+                icon: Icons.rocket_launch_rounded,
+                color: const Color(0xFF6366F1),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: Colors.white10),
                 ),
-                const SizedBox(height: 10),
-                _buildRazorpayDonationTile(
-                  context,
-                  ref,
-                  title: 'App Store Publisher',
-                  description: 'Fund Play Store & App Store developer fees.',
-                  price: '₹299 once',
-                  url: 'https://razorpay.me/@CodeChap?amount=kXxURMaXFk%2Bmrv%2B9uGrYpg%3D%3D',
-                  icon: Icons.rocket_launch_rounded,
-                  color: const Color(0xFF6366F1),
-                ),
-                const SizedBox(height: 10),
-                ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(color: Colors.white10),
-                  ),
-                  tileColor: Colors.white.withValues(alpha: 0.01),
-                  leading: const Icon(Icons.currency_bitcoin_rounded, color: Color(0xFFF59E0B)),
-                  title: const Text('Anonymous Crypto', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
-                  subtitle: const Text('Monero (XMR) & Bitcoin', style: TextStyle(fontSize: 10, color: Colors.white54)),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _showCryptoDonationDialog(context, ref);
-                  },
-                ),
-              ] else ...[
-                Center(
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFEF4444),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      elevation: 0,
-                    ),
-                    onPressed: () async {
-                      await ref.read(sponsorshipProvider.notifier).setSponsorStatus(false);
-                      if (context.mounted) {
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Sponsorship status updated.')),
-                        );
-                      }
-                    },
-                    child: const Text('Cancel Sponsorship'),
-                  ),
-                ),
-              ],
+                tileColor: Colors.white.withValues(alpha: 0.01),
+                leading: const Icon(Icons.currency_bitcoin_rounded, color: Color(0xFFF59E0B)),
+                title: const Text('Anonymous Crypto', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
+                subtitle: const Text('Monero (XMR) & Bitcoin', style: TextStyle(fontSize: 10, color: Colors.white54)),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _showCryptoDonationDialog(context, ref);
+                },
+              ),
             ],
           ),
           actions: [
@@ -2259,7 +2232,7 @@ class SettingsScreen extends ConsumerWidget {
                             backgroundColor: Colors.white.withValues(alpha: 0.05),
                             child: Padding(
                               padding: const EdgeInsets.all(2),
-                              child: Image.network(url, errorBuilder: (c, e, s) => const Icon(Icons.face_rounded, color: Colors.white60)),
+                              child: Image.network(url, errorBuilder: (c, e, s) => BeautifulAvatar(name: 'Chatly', username: 'avatar_$idx', radius: 18)),
                             ),
                           ),
                         );
@@ -2875,10 +2848,10 @@ class SettingsScreen extends ConsumerWidget {
                                       shape: BoxShape.circle,
                                       border: Border.all(color: healthColor, width: 2),
                                     ),
-                                    child: CircleAvatar(
+                                    child: BeautifulAvatar(
+                                      name: contact,
+                                      username: contact,
                                       radius: 16,
-                                      backgroundColor: Colors.white10,
-                                      child: Text(contact[0].toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                                     ),
                                   ),
                                   const SizedBox(width: 12),

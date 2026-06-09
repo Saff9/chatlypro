@@ -14,6 +14,7 @@ import '../../../../services/message_storage_service.dart';
 import '../../../../core/widgets/secure_keyboard.dart';
 import '../../../../providers/wallpaper_provider.dart';
 import '../../../../services/p2p_mesh_service.dart';
+import '../../../../core/widgets/beautiful_avatar.dart';
 
 // ─── Reaction catalogue ─────────────────────────────────────────────────────
 final _kReactions = [
@@ -810,6 +811,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   }
 
   Future<bool> _requestAudioPermission(BuildContext context) async {
+    final box = Hive.box('settings');
+    final alreadyGranted = box.get('audio_permission_granted', defaultValue: false) as bool;
+    if (alreadyGranted) {
+      return true;
+    }
+
     final completer = Completer<bool>();
     
     showDialog(
@@ -847,8 +854,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 backgroundColor: theme.primaryColor,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              onPressed: () {
-                Navigator.of(context).pop();
+              onPressed: () async {
+                await box.put('audio_permission_granted', true);
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                }
                 completer.complete(true);
               },
               child: const Text('Allow'),
@@ -1452,13 +1462,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               const SizedBox(width: 4),
               const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
               const SizedBox(width: 4),
-              CircleAvatar(
+              BeautifulAvatar(
+                name: widget.chatData.name,
+                username: widget.chatData.username,
                 radius: 18,
-                backgroundColor: theme.primaryColor.withValues(alpha: 0.15),
-                child: Text(
-                  widget.chatData.name[0],
-                  style: TextStyle(color: theme.primaryColor, fontWeight: FontWeight.bold),
-                ),
               ),
             ],
           ),

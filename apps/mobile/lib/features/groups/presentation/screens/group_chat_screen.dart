@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cryptography/cryptography.dart';
+import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../providers/connection_provider.dart';
 import '../../../../services/api_service.dart';
 import '../../../../services/auth_service.dart';
@@ -652,9 +653,10 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                     itemBuilder: (context, idx) {
                       final contact = connections[idx];
                       return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: Colors.white10,
-                          child: Text(contact[0].toUpperCase(), style: const TextStyle(color: Colors.white)),
+                        leading: BeautifulAvatar(
+                          name: contact,
+                          username: contact,
+                          radius: 18,
                         ),
                         title: Text(contact, style: const TextStyle(color: Colors.white)),
                         trailing: const Icon(Icons.send_rounded, color: Color(0xFF8083FF)),

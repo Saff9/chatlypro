@@ -13,6 +13,7 @@ import 'p2p_chat_screen.dart';
 import '../../../../providers/connection_provider.dart';
 import '../../../../providers/layout_provider.dart';
 import '../../../../services/api_service.dart';
+import '../../../../core/widgets/beautiful_avatar.dart';
 
 class ChatListScreen extends ConsumerStatefulWidget {
   const ChatListScreen({super.key});
@@ -296,19 +297,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
         actions: [
           if (!_isSearching) ...[
             IconButton(
-              icon: const Icon(Icons.radar_rounded),
-              tooltip: 'Simulate Proximity Tap',
-              onPressed: () {
-                ref.read(connectionProvider.notifier).simulateProximityRequest('marcus_collect');
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Simulated close-proximity NFC tap trigger!'),
-                    backgroundColor: Color(0xFF6366F1),
-                  ),
-                );
-              },
-            ),
-            IconButton(
               icon: const Icon(Icons.qr_code_scanner_rounded),
               onPressed: () async {
                 final granted = await _requestCameraPermission(context);
@@ -445,13 +433,10 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                         final req = pendingIncoming[idx];
                         return Row(
                           children: [
-                            CircleAvatar(
+                            BeautifulAvatar(
+                              name: req.username,
+                              username: req.username,
                               radius: 14,
-                              backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.15),
-                              child: Text(
-                                req.username[0].toUpperCase(),
-                                style: const TextStyle(color: Color(0xFF6366F1), fontSize: 10, fontWeight: FontWeight.bold),
-                              ),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
@@ -551,35 +536,27 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                             },
                             child: Column(
                               children: [
-                                CircleAvatar(
-                                  radius: 26,
-                                  backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.15),
-                                  child: Stack(
-                                    children: [
-                                      Center(
-                                        child: Text(
-                                          peer.username[0].toUpperCase(),
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Color(0xFF10B981),
-                                          ),
+                                Stack(
+                                  children: [
+                                    BeautifulAvatar(
+                                      name: peer.username,
+                                      username: peer.username,
+                                      radius: 26,
+                                    ),
+                                    Positioned(
+                                      right: 0,
+                                      bottom: 0,
+                                      child: Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF10B981),
+                                          shape: BoxShape.circle,
+                                          border: Border.all(color: theme.scaffoldBackgroundColor, width: 2),
                                         ),
                                       ),
-                                      Positioned(
-                                        right: 0,
-                                        bottom: 0,
-                                        child: Container(
-                                          width: 12,
-                                          height: 12,
-                                          decoration: BoxDecoration(
-                                            color: const Color(0xFF10B981),
-                                            shape: BoxShape.circle,
-                                            border: Border.all(color: theme.scaffoldBackgroundColor, width: 2),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
@@ -727,17 +704,10 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                                 width: 2.0,
                               ),
                             ),
-                            child: CircleAvatar(
+                            child: BeautifulAvatar(
+                              name: chat.name,
+                              username: chat.username,
                               radius: 23,
-                              backgroundColor: theme.primaryColor.withValues(alpha: 0.12),
-                              child: Text(
-                                chat.name[0],
-                                style: TextStyle(
-                                  color: theme.primaryColor,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                ),
-                              ),
                             ),
                           ),
                           if (chat.isOnline)
@@ -828,6 +798,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 80.0),
         child: FloatingActionButton(
+          mini: true,
           onPressed: () async {
             final granted = await _requestCameraPermission(context);
             if (granted && context.mounted) {
@@ -835,13 +806,19 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
             }
           },
           backgroundColor: theme.primaryColor,
-          child: const Icon(Icons.chat_bubble_outline_rounded, color: Colors.white),
+          child: const Icon(Icons.qr_code_scanner_rounded, color: Colors.white, size: 20),
         ),
       ),
     );
   }
 
   Future<bool> _requestCameraPermission(BuildContext context) async {
+    final box = Hive.box('settings');
+    final alreadyGranted = box.get('camera_permission_granted', defaultValue: false) as bool;
+    if (alreadyGranted) {
+      return true;
+    }
+
     final completer = Completer<bool>();
     
     showDialog(
@@ -879,8 +856,11 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                 backgroundColor: theme.primaryColor,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              onPressed: () {
-                Navigator.of(context).pop();
+              onPressed: () async {
+                await box.put('camera_permission_granted', true);
+                if (context.mounted) {
+                  Navigator.of(context).pop();
+                }
                 completer.complete(true);
               },
               child: const Text('Allow'),
@@ -933,33 +913,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.white60, fontSize: 11, height: 1.4),
                       ),
-                      if (kDebugMode) ...[
-                        const SizedBox(height: 16),
-                        // Mock scan targets
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white10,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                              onPressed: () => simulateScan('chatly:connect:@sarah_adams'),
-                              child: const Text('Mock Sarah', style: TextStyle(fontSize: 11)),
-                            ),
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white10,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                              onPressed: () => simulateScan('chatly:connect:@marcus_collect'),
-                              child: const Text('Mock Marcus', style: TextStyle(fontSize: 11)),
-                            ),
-                          ],
-                        ),
-                      ],
+
                     ] else ...[
                       const Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 48),
                       const SizedBox(height: 12),
@@ -1023,13 +977,10 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
                             return ListTile(
                               dense: true,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                              leading: CircleAvatar(
+                              leading: BeautifulAvatar(
+                                name: uName,
+                                username: uName,
                                 radius: 14,
-                                backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.2),
-                                child: Text(
-                                  uName.isNotEmpty ? uName[0].toUpperCase() : '?',
-                                  style: const TextStyle(color: Color(0xFF6366F1), fontSize: 10, fontWeight: FontWeight.bold),
-                                ),
                               ),
                               title: Text('@$uName', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                               subtitle: Text(user['mood'] ?? '🎵 Vibing', style: const TextStyle(color: Colors.white54, fontSize: 10)),
