@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -94,6 +95,17 @@ const SCHEMA_SQL = `
     ban_until        TIMESTAMP
   );
 
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS email_hash VARCHAR(255);
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS email_encrypted TEXT;
+
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_email_hash_key') THEN
+      ALTER TABLE users ADD CONSTRAINT users_email_hash_key UNIQUE (email_hash);
+    END IF;
+  END;
+  $$;
+
   ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
   ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
   ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
@@ -170,7 +182,67 @@ const SCHEMA_SQL = `
 
   ALTER TABLE pulse_posts DROP COLUMN IF EXISTS seen_count;
   DELETE FROM pulse_posts WHERE created_at < NOW() - INTERVAL '7 days';
+
+  CREATE INDEX IF NOT EXISTS idx_friendships_user_id_b ON friendships(user_id_b);
+  CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id);
+  CREATE INDEX IF NOT EXISTS idx_group_messages_group_id_created_at ON group_messages(group_id, created_at ASC);
+  CREATE INDEX IF NOT EXISTS idx_pulse_posts_created_at ON pulse_posts(created_at DESC);
+
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  CREATE INDEX IF NOT EXISTS idx_users_username_trgm ON users USING gin (username gin_trgm_ops);
 `;
+
+// Migration for legacy users with plain text email addresses
+async function migrateLegacyEmails(client: PoolClient) {
+  try {
+    // Check if the legacy 'email' column exists
+    const colCheck = await client.query(`
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'email'
+    `);
+    
+    if (colCheck.rows.length === 0) {
+      return; // No legacy email column to migrate
+    }
+
+    // Fetch all users that have a legacy email but no email_hash
+    const legacyUsers = await client.query(`
+      SELECT id, email FROM users 
+      WHERE email_hash IS NULL AND email IS NOT NULL AND email != ''
+    `);
+
+    if (legacyUsers.rows.length > 0) {
+      console.log(`[Database Migration] Found ${legacyUsers.rows.length} legacy users. Migrating emails...`);
+      
+      const rawKey = process.env.EMAIL_ENCRYPTION_KEY || 'chatly-default-key-DO-NOT-USE!!';
+      const emailKey = Buffer.from(rawKey.padEnd(32, '0').slice(0, 32));
+
+      for (const row of legacyUsers.rows) {
+        const userId = row.id;
+        const plainEmail = row.email.toLowerCase().trim();
+
+        // 1. Hash email
+        const emailHash = crypto.createHash('sha256').update(plainEmail).digest('hex');
+
+        // 2. Encrypt email
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv('aes-256-cbc', emailKey, iv);
+        let enc = cipher.update(plainEmail, 'utf8', 'hex');
+        enc += cipher.final('hex');
+        const emailEncrypted = iv.toString('hex') + ':' + enc;
+
+        // 3. Update database row
+        await client.query(
+          `UPDATE users SET email_hash = $1, email_encrypted = $2 WHERE id = $3`,
+          [emailHash, emailEncrypted, userId]
+        );
+      }
+      console.log('[Database Migration] Legacy emails migration completed.');
+    }
+  } catch (err: any) {
+    console.error('[Database Migration] Error migrating legacy emails:', err.message);
+  }
+}
 
 // ─── Database Initialization ──────────────────────────────────────────────────
 // Retries up to maxAttempts times with exponential backoff.
@@ -185,7 +257,8 @@ export async function initializeDatabase(maxAttempts = 3): Promise<boolean> {
       client = await pool.connect();
       console.log('[Database] Connected. Applying schema...');
       await client.query(SCHEMA_SQL);
-      console.log('[Database] Schema ready.');
+      await migrateLegacyEmails(client);
+      console.log('[Database] Schema ready and migrations applied.');
       return true;
     } catch (err: any) {
       lastError = err;

@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import crypto from 'crypto';
 import { pool } from '../db';
 import { verifyToken } from './auth';
-import { activeConnections } from '../sockets/chat';
+import { activeConnections, safeSend } from '../sockets/chat';
 import { WebSocket } from 'ws';
 
 // ─── Pulse Routes ─────────────────────────────────────────────────────────────
@@ -117,8 +117,8 @@ export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPlu
       if (authorRes.rows.length > 0) {
         const authorUsername = authorRes.rows[0].username;
         const authorSocket = activeConnections.get(authorUsername);
-        if (authorSocket?.readyState === WebSocket.OPEN) {
-          authorSocket.send(JSON.stringify({
+        if (authorSocket) {
+          safeSend(authorSocket, JSON.stringify({
             type: 'incoming_connection_request',
             fromUsername: user.username,
           }));
@@ -312,8 +312,8 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
       // Notify target via WebSocket if online
       const targetSocket = activeConnections.get(targetUsername);
-      if (targetSocket?.readyState === WebSocket.OPEN) {
-        targetSocket.send(JSON.stringify({
+      if (targetSocket) {
+        safeSend(targetSocket, JSON.stringify({
           type: 'incoming_connection_request',
           fromUsername: user.username,
         }));
@@ -359,8 +359,8 @@ export async function userRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
       // Notify target via WebSocket if online that connection was accepted
       const targetSocket = activeConnections.get(targetUsername);
-      if (targetSocket?.readyState === WebSocket.OPEN) {
-        targetSocket.send(JSON.stringify({
+      if (targetSocket) {
+        safeSend(targetSocket, JSON.stringify({
           type: 'connection_accepted',
           fromUsername: user.username,
         }));

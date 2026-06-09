@@ -7,6 +7,17 @@ import { sendSilentPush } from '../services/push';
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 
+// Safe send helper to catch WebSocket errors gracefully and prevent process crashes
+export function safeSend(ws: WebSocket, payload: string) {
+  if (ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(payload);
+    } catch (err: any) {
+      console.warn('[WS] Failed to send message:', err.message);
+    }
+  }
+}
+
 // ─── Active socket registry ───────────────────────────────────────────────────
 // Keyed by username (unique per user). Incoming connections replace old ones.
 export const activeConnections = new Map<string, WebSocket>();
@@ -119,68 +130,75 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
   let rateLimitResetAt = Date.now() + 60_000;
 
   socket.on('message', async (data) => {
-    // Guard against oversized payloads (64 KB)
-    if (Buffer.byteLength(data as any) > 65_536) {
-      socket.close(1009, 'Message too large');
-      return;
-    }
-
-    // Rate limit
-    const now = Date.now();
-    if (now > rateLimitResetAt) {
-      messageCount = 0;
-      rateLimitResetAt = now + 60_000;
-    }
-    if (++messageCount > 120) {
-      socket.close(1008, 'Rate limit exceeded');
-      return;
-    }
-
-    let message: any;
     try {
-      message = JSON.parse(data.toString());
-    } catch {
-      socket.send(JSON.stringify({ type: 'error', error: 'Invalid JSON' }));
-      return;
-    }
+      // Guard against oversized payloads (64 KB)
+      if (Buffer.byteLength(data as any) > 65_536) {
+        socket.close(1009, 'Message too large');
+        return;
+      }
 
-    switch (message.type) {
-      case 'ping':
-        socket.send(JSON.stringify({ type: 'pong' }));
-        break;
+      // Rate limit
+      const now = Date.now();
+      if (now > rateLimitResetAt) {
+        messageCount = 0;
+        rateLimitResetAt = now + 60_000;
+      }
+      if (++messageCount > 120) {
+        socket.close(1008, 'Rate limit exceeded');
+        return;
+      }
 
-      case 'message':
-        if (!message.recipientId || !message.ciphertext) {
-          socket.send(JSON.stringify({ type: 'error', error: 'recipientId and ciphertext are required' }));
+      let message: any;
+      try {
+        message = JSON.parse(data.toString());
+      } catch {
+        safeSend(socket, JSON.stringify({ type: 'error', error: 'Invalid JSON' }));
+        return;
+      }
+
+      switch (message.type) {
+        case 'ping':
+          safeSend(socket, JSON.stringify({ type: 'pong' }));
           break;
-        }
-        // Enforce max ciphertext size (100 KB)
-        if (typeof message.ciphertext !== 'string' || message.ciphertext.length > 102_400) {
-          socket.send(JSON.stringify({ type: 'error', error: 'ciphertext too large' }));
-          break;
-        }
-        await relayE2EMessage(username, String(message.recipientId), String(message.ciphertext));
-        break;
 
-      case 'typing':
-        if (!message.recipientId) break;
-        relayTypingIndicator(username, String(message.recipientId), !!message.isTyping);
-        break;
-
-      case 'group_message':
-        if (!message.groupId || !message.ciphertext) {
-          socket.send(JSON.stringify({ type: 'error', error: 'groupId and ciphertext are required' }));
+        case 'message':
+          if (!message.recipientId || !message.ciphertext) {
+            safeSend(socket, JSON.stringify({ type: 'error', error: 'recipientId and ciphertext are required' }));
+            break;
+          }
+          // Enforce max ciphertext size (100 KB)
+          if (typeof message.ciphertext !== 'string' || message.ciphertext.length > 102_400) {
+            safeSend(socket, JSON.stringify({ type: 'error', error: 'ciphertext too large' }));
+            break;
+          }
+          await relayE2EMessage(username, String(message.recipientId), String(message.ciphertext));
           break;
-        }
-        if (typeof message.ciphertext !== 'string' || message.ciphertext.length > 102_400) {
-          socket.send(JSON.stringify({ type: 'error', error: 'ciphertext too large' }));
-          break;
-        }
-        await relayGroupMessage(username, String(message.groupId), String(message.ciphertext));
-        break;
 
-      default:
-        socket.send(JSON.stringify({ type: 'error', error: `Unknown message type: ${message.type}` }));
+        case 'typing':
+          if (!message.recipientId) break;
+          relayTypingIndicator(username, String(message.recipientId), !!message.isTyping);
+          break;
+
+        case 'group_message':
+          if (!message.groupId || !message.ciphertext) {
+            safeSend(socket, JSON.stringify({ type: 'error', error: 'groupId and ciphertext are required' }));
+            break;
+          }
+          if (typeof message.ciphertext !== 'string' || message.ciphertext.length > 102_400) {
+            safeSend(socket, JSON.stringify({ type: 'error', error: 'ciphertext too large' }));
+            break;
+          }
+          await relayGroupMessage(username, String(message.groupId), String(message.ciphertext));
+          break;
+
+        default:
+          safeSend(socket, JSON.stringify({ type: 'error', error: `Unknown message type: ${message.type}` }));
+      }
+    } catch (err: any) {
+      console.error(`[WS] Error processing message from ${username}:`, err.message);
+      try {
+        safeSend(socket, JSON.stringify({ type: 'error', error: 'Internal server error processing message' }));
+      } catch {}
     }
   });
 
@@ -209,7 +227,7 @@ async function deliverOfflineMessages(recipientUsername: string, socket: WebSock
         const data = await redisClient.get(key);
         if (data) {
           try {
-            socket.send(JSON.stringify({ type: 'message', data: JSON.parse(data) }));
+            safeSend(socket, JSON.stringify({ type: 'message', data: JSON.parse(data) }));
           } catch {
             // Skip malformed cached message
           }
@@ -225,7 +243,7 @@ async function deliverOfflineMessages(recipientUsername: string, socket: WebSock
   // Memory fallback
   const pending = inMemoryOfflineQueue.filter(m => m.recipientId === recipientUsername);
   for (const msg of pending) {
-    socket.send(JSON.stringify({
+    safeSend(socket, JSON.stringify({
       type: 'message',
       senderId: msg.senderId,
       ciphertext: msg.ciphertext,
@@ -241,8 +259,8 @@ async function relayE2EMessage(senderUsername: string, recipientUsername: string
   const recipientSocket = activeConnections.get(recipientUsername);
   const payload = { senderId: senderUsername, ciphertext, timestamp: Date.now() };
 
-  if (recipientSocket?.readyState === WebSocket.OPEN) {
-    recipientSocket.send(JSON.stringify({ type: 'message', ...payload }));
+  if (recipientSocket) {
+    safeSend(recipientSocket, JSON.stringify({ type: 'message', ...payload }));
     return;
   }
 
@@ -279,8 +297,8 @@ async function relayE2EMessage(senderUsername: string, recipientUsername: string
 // ─── Relay Typing Indicator ────────────────────────────────────────────────────
 function relayTypingIndicator(senderUsername: string, recipientUsername: string, isTyping: boolean) {
   const recipientSocket = activeConnections.get(recipientUsername);
-  if (recipientSocket?.readyState === WebSocket.OPEN) {
-    recipientSocket.send(JSON.stringify({ type: 'typing', senderId: senderUsername, isTyping }));
+  if (recipientSocket) {
+    safeSend(recipientSocket, JSON.stringify({ type: 'typing', senderId: senderUsername, isTyping }));
   }
 }
 
@@ -314,8 +332,8 @@ async function relayGroupMessage(senderUsername: string, groupId: string, cipher
       if (memberUsername === senderUsername) continue;
 
       const memberSocket = activeConnections.get(memberUsername);
-      if (memberSocket?.readyState === WebSocket.OPEN) {
-        memberSocket.send(JSON.stringify(payload));
+      if (memberSocket) {
+        safeSend(memberSocket, JSON.stringify(payload));
       } else {
         try {
           const pushRes = await pool.query('SELECT push_token FROM users WHERE username = $1', [memberUsername]);
