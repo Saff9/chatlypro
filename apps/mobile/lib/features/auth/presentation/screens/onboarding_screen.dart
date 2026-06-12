@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'login_screen.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
 
@@ -112,19 +113,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     OnboardingData(
       title: 'Private & Secure',
       description: 'Your conversations are protected with enterprise-grade end-to-end encryption. Only you hold the decryption keys.',
-      icon: Icons.shield_rounded,
+      icon: CupertinoIcons.shield_fill,
       color: const Color(0xFF8083FF), // Premium Violet/Indigo
     ),
     OnboardingData(
       title: 'Anonymous Match',
       description: 'Discover and connect anonymously with others based on interests without revealing your username or phone number.',
-      icon: Icons.masks_rounded,
+      icon: CupertinoIcons.eye_slash_fill,
       color: const Color(0xFFFFB300), // Amber Accent
     ),
     OnboardingData(
       title: 'Smart Algorithms',
       description: 'Experience conversation memory scores, offline queues, and local toxicity filters keeping your chats secure and engaging.',
-      icon: Icons.psychology_rounded,
+      icon: CupertinoIcons.sparkles,
       color: const Color(0xFF10B981), // Emerald
     ),
   ];
@@ -277,8 +278,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           },
                           child: Icon(
                             _currentPage == _pages.length - 1
-                                ? Icons.check_rounded
-                                : Icons.arrow_forward_rounded,
+                                ? CupertinoIcons.checkmark
+                                : CupertinoIcons.arrow_right,
                             color: Colors.white,
                           ),
                         ),

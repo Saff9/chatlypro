@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'onboarding_screen.dart';
 import 'login_screen.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
@@ -221,7 +222,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                               ],
                               child: Center(
                                 child: Icon(
-                                  Icons.chat_bubble_rounded,
+                                  CupertinoIcons.chat_bubble_fill,
                                   color: theme.primaryColor,
                                   size: 32,
                                 ),
@@ -307,7 +308,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                                 ),
                               ),
                               SizedBox(width: 8),
-                              Icon(Icons.arrow_forward_rounded, color: Colors.white),
+                               Icon(CupertinoIcons.arrow_right, color: Colors.white, size: 18),
                             ],
                           ),
                         ),

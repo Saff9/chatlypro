@@ -230,6 +230,7 @@ class AuthService {
 
         WebSocketService().connect(url: AppConfig.wsBaseUrl, token: _token!);
         PushNotificationService().setupPushNotifications();
+        _uploadPublicKeyIfNeeded();
         return true;
       }
     } catch (e) {

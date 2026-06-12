@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:hive/hive.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
 import '../../../../navigation/main_navigation.dart';
@@ -145,7 +146,7 @@ class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
               const SizedBox(height: 32),
 
               // Header
-              const Icon(Icons.alternate_email_rounded, color: Color(0xFF8083FF), size: 36),
+              const Icon(CupertinoIcons.at, color: Color(0xFF8083FF), size: 36),
               const SizedBox(height: 16),
               const Text(
                 'Choose Your Username',
@@ -234,8 +235,8 @@ class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
                             : _isAvailable != null
                                 ? Icon(
                                     _isAvailable!
-                                        ? Icons.check_circle_rounded
-                                        : Icons.cancel_rounded,
+                                        ? CupertinoIcons.checkmark_circle_fill
+                                        : CupertinoIcons.xmark_circle_fill,
                                     color: _isAvailable!
                                         ? const Color(0xFF10B981)
                                         : const Color(0xFFEF4444),
@@ -253,7 +254,7 @@ class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
                           ? const Row(
                               key: ValueKey('available'),
                               children: [
-                                Icon(Icons.check_rounded, color: Color(0xFF10B981), size: 15),
+                                Icon(CupertinoIcons.checkmark, color: Color(0xFF10B981), size: 15),
                                 SizedBox(width: 6),
                                 Text(
                                   'Username is available',
@@ -269,7 +270,7 @@ class _UsernameSetupScreenState extends State<UsernameSetupScreen> {
                               ? Row(
                                   key: const ValueKey('unavailable'),
                                   children: [
-                                    const Icon(Icons.close_rounded, color: Color(0xFFEF4444), size: 15),
+                                    const Icon(CupertinoIcons.xmark, color: Color(0xFFEF4444), size: 15),
                                     const SizedBox(width: 6),
                                     Text(
                                       _errorMessage,

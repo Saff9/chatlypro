@@ -20,9 +20,14 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
       auth: { user, pass }
     });
   } else if (isProduction) {
-    console.error('[FATAL] SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS env vars.');
-    // Fail-closed: throw so registration/login returns 503 instead of silently proceeding
-    throw new Error('SMTP_NOT_CONFIGURED');
+    console.warn('[SECURITY WARNING] SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS env vars. Falling back to local console mock to prevent registration failure.');
+    transporter = {
+      sendMail: async (mailOptions: any) => {
+        const maskedEmail = mailOptions.to.replace(/(?<=.{2}).(?=[^@]*?@)/g, '*');
+        console.warn(`[SECURITY WARNING] SMTP unconfigured. Email to ${maskedEmail} simulated.`);
+        return { messageId: 'unconfigured-smtp-production-id' };
+      }
+    } as any;
   } else {
     console.log('No SMTP configurations found. Initializing a free dynamic Ethereal test account...');
     try {

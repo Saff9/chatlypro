@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -44,7 +45,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          icon: const Icon(CupertinoIcons.left_chevron, size: 20),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -86,7 +87,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             keyboardType: TextInputType.emailAddress,
             decoration: const InputDecoration(
               hintText: 'Email Address',
-              prefixIcon: Icon(Icons.email_outlined),
+              prefixIcon: Icon(CupertinoIcons.mail),
             ),
             validator: (value) {
               if (value == null || value.isEmpty) {
@@ -137,7 +138,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             shape: BoxShape.circle,
           ),
           child: Icon(
-            Icons.mark_email_read_outlined,
+            CupertinoIcons.mail,
             size: 64,
             color: theme.primaryColor,
           ),

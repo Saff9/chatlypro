@@ -27,6 +27,7 @@ dependencies:
 
   # UI & Design
   google_fonts: ^6.1.0
+  cupertino_icons: ^1.0.8
   lottie: ^3.1.0
   shimmer: ^3.0.0
   animated_text_kit: ^4.2.2

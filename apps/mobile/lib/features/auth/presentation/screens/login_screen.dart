@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:hive/hive.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
@@ -247,7 +248,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     hintText: 'name@company.com',
                                     hintStyle: TextStyle(color: const Color(0xFFC7C4D7).withValues(alpha: 0.35)),
                                     prefixIcon: Icon(
-                                      Icons.mail_rounded,
+                                      CupertinoIcons.mail,
                                       color: _emailFocus.hasFocus
                                           ? theme.primaryColor
                                           : const Color(0xFFC7C4D7).withValues(alpha: 0.4),
@@ -329,7 +330,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     hintText: '••••••••',
                                     hintStyle: TextStyle(color: const Color(0xFFC7C4D7).withValues(alpha: 0.35)),
                                     prefixIcon: Icon(
-                                      Icons.lock_rounded,
+                                      CupertinoIcons.lock,
                                       color: _passwordFocus.hasFocus
                                           ? theme.primaryColor
                                           : const Color(0xFFC7C4D7).withValues(alpha: 0.4),
@@ -337,8 +338,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     suffixIcon: IconButton(
                                       icon: Icon(
                                         _obscurePassword
-                                            ? Icons.visibility_off_rounded
-                                            : Icons.visibility_rounded,
+                                            ? CupertinoIcons.eye_slash
+                                            : CupertinoIcons.eye,
                                         color: const Color(0xFFC7C4D7).withValues(alpha: 0.5),
                                         size: 20,
                                       ),
@@ -426,7 +427,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                             ),
                                           ),
                                           SizedBox(width: 8),
-                                          Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
+                                          Icon(CupertinoIcons.arrow_right, color: Colors.white, size: 18),
                                         ],
                                       ),
                               ),

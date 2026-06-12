@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:hive/hive.dart';
 import 'welcome_screen.dart';
 import 'calculator_screen.dart';
@@ -270,7 +271,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                               alignment: Alignment.center,
                               children: [
                                 Icon(
-                                  Icons.chat_bubble_rounded,
+                                  CupertinoIcons.chat_bubble_fill,
                                   size: 64,
                                   color: theme.primaryColor,
                                 ),
@@ -288,7 +289,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                                       ),
                                     ),
                                     child: Icon(
-                                      Icons.lock_rounded,
+                                      CupertinoIcons.lock_fill,
                                       size: 14,
                                       color: theme.primaryColor,
                                     ),

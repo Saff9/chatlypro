@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
 import 'username_setup_screen.dart';
@@ -143,7 +144,7 @@ class _SignupScreenState extends State<SignupScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFFE4E1ED)),
+          icon: const Icon(CupertinoIcons.left_chevron, color: Color(0xFFE4E1ED), size: 20),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -157,7 +158,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Header
-                  const Icon(Icons.shield_rounded, color: Color(0xFF8083FF), size: 36),
+                  const Icon(CupertinoIcons.shield_fill, color: Color(0xFF8083FF), size: 36),
                   const SizedBox(height: 16),
                   const Text(
                     'Create Account',
@@ -199,7 +200,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           style: const TextStyle(color: Color(0xFFE4E1ED)),
                           decoration: _fieldDecoration(
                             hint: 'Email Address',
-                            prefixIcon: Icons.email_outlined,
+                            prefixIcon: CupertinoIcons.mail,
                             isFocused: _emailFocus.hasFocus,
                           ),
                           validator: (value) {
@@ -220,11 +221,11 @@ class _SignupScreenState extends State<SignupScreen> {
                           style: const TextStyle(color: Color(0xFFE4E1ED)),
                           decoration: _fieldDecoration(
                             hint: 'Password',
-                            prefixIcon: Icons.lock_outline_rounded,
+                            prefixIcon: CupertinoIcons.lock,
                             isFocused: _passwordFocus.hasFocus,
                             suffixIcon: IconButton(
                               icon: Icon(
-                                _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                                _obscurePassword ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
                                 color: const Color(0xFFC7C4D7).withValues(alpha: 0.5),
                                 size: 20,
                               ),
@@ -247,11 +248,11 @@ class _SignupScreenState extends State<SignupScreen> {
                           style: const TextStyle(color: Color(0xFFE4E1ED)),
                           decoration: _fieldDecoration(
                             hint: 'Confirm Password',
-                            prefixIcon: Icons.lock_reset_rounded,
+                            prefixIcon: CupertinoIcons.lock_shield,
                             isFocused: _confirmFocus.hasFocus,
                             suffixIcon: IconButton(
                               icon: Icon(
-                                _obscureConfirmPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                                _obscureConfirmPassword ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
                                 color: const Color(0xFFC7C4D7).withValues(alpha: 0.5),
                                 size: 20,
                               ),

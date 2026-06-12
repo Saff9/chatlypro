@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'dart:ui';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../features/chat/presentation/screens/chat_list_screen.dart';
@@ -76,32 +77,32 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
       switch (key) {
         case 'chats':
           return NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline_rounded, color: theme.textTheme.bodyMedium?.color, size: 20),
-            selectedIcon: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF6366F1), size: 20),
+            icon: Icon(CupertinoIcons.chat_bubble, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(CupertinoIcons.chat_bubble_fill, color: Color(0xFF8083FF), size: 20),
             label: 'Chats',
           );
         case 'groups':
           return NavigationDestination(
-            icon: Icon(Icons.groups_outlined, color: theme.textTheme.bodyMedium?.color, size: 20),
-            selectedIcon: const Icon(Icons.groups_rounded, color: Color(0xFF6366F1), size: 20),
+            icon: Icon(CupertinoIcons.group, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(CupertinoIcons.group_solid, color: Color(0xFF8083FF), size: 20),
             label: 'Groups',
           );
         case 'pulse':
           return NavigationDestination(
-            icon: Icon(Icons.masks_outlined, color: theme.textTheme.bodyMedium?.color, size: 20),
-            selectedIcon: const Icon(Icons.masks_rounded, color: Color(0xFFF59E0B), size: 20),
+            icon: Icon(CupertinoIcons.eye, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(CupertinoIcons.eye_fill, color: Color(0xFFF59E0B), size: 20),
             label: 'Pulse',
           );
         case 'settings':
           return NavigationDestination(
-            icon: Icon(Icons.settings_outlined, color: theme.textTheme.bodyMedium?.color, size: 20),
-            selectedIcon: const Icon(Icons.settings_rounded, color: Color(0xFF10B981), size: 20),
+            icon: Icon(CupertinoIcons.settings, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(CupertinoIcons.settings_solid, color: Color(0xFF10B981), size: 20),
             label: 'Settings',
           );
         default:
           return NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline_rounded, color: theme.textTheme.bodyMedium?.color, size: 20),
-            selectedIcon: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF6366F1), size: 20),
+            icon: Icon(CupertinoIcons.chat_bubble, color: theme.textTheme.bodyMedium?.color, size: 20),
+            selectedIcon: const Icon(CupertinoIcons.chat_bubble_fill, color: Color(0xFF8083FF), size: 20),
             label: 'Chats',
           );
       }
@@ -145,7 +146,7 @@ class _MainNavigationState extends ConsumerState<MainNavigation> with WidgetsBin
                     color: theme.primaryColor.withValues(alpha: 0.08),
                     border: Border.all(color: theme.primaryColor.withValues(alpha: 0.2), width: 2),
                   ),
-                  child: Icon(Icons.chat_bubble_outline_rounded, size: 48, color: theme.primaryColor),
+                  child: Icon(CupertinoIcons.chat_bubble, size: 48, color: theme.primaryColor),
                 ),
                 const SizedBox(height: 16),
                 const Text(

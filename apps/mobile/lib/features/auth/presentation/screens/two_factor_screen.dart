@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
 import 'username_setup_screen.dart';
@@ -70,7 +71,7 @@ class _TwoFactorScreenState extends State<TwoFactorScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          icon: const Icon(CupertinoIcons.left_chevron, color: Colors.white, size: 20),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -107,7 +108,7 @@ class _TwoFactorScreenState extends State<TwoFactorScreen> {
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
-                            Icons.security_rounded,
+                            CupertinoIcons.shield_fill,
                             size: 48,
                             color: Color(0xFF10B981),
                           ),
