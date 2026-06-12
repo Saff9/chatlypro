@@ -64,6 +64,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
   // UI state
   int? _activeTimeLockDelayMs;
+  final Map<String, bool> _isPlayingMap = {};
+  final Map<String, bool> _isTranscriptExpandedMap = {};
+  bool _isRecordingVoice = false;
+  int _recordingDuration = 0;
+  Timer? _recordingTimer;
+  final List<double> _waveHeights = [10, 24, 12, 35, 18, 30, 15, 28, 8, 22, 14, 38, 20];
 
   @override
   void initState() {
@@ -906,11 +912,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     }
     _addMessageAndCheckLimit(newVoiceMsg);
 
-    if (_sharedSessionKey != null && _isServiceReady) {
-      final ciphertext = await EncryptionService().encryptMessage(
+    if (_session != null && _isServiceReady) {
+      final ciphertext = await EncryptionService().encrypt(
+        session: _session!,
         plaintext: "[Voice Message] $transcript",
-        secretKey: _sharedSessionKey!,
       );
+      
+      // Save updated Double Ratchet session state
+      final secureBox = await Hive.openBox('secure_vault');
+      await secureBox.put('session_${widget.chatData.username}', jsonEncode(_session!.toJson()));
       final wasSent = await WebSocketService().sendMessage(
         recipientId: widget.chatData.username,
         ciphertext: ciphertext,
@@ -2147,6 +2157,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     final mySignPub = secureBox.get('identity_sign_public_key') as String?;
     final peerSignPub = secureBox.get('recipient_sign_pub_${widget.chatData.username}') as String?;
 
+    if (!mounted) return;
+
     if (mySignPub == null || peerSignPub == null) {
       showDialog(
         context: context,
@@ -2200,7 +2212,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             Container(
               padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
               decoration: BoxDecoration(
-                color: Colors.black24,
+                color: Colors.black26,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: Colors.white10),
               ),
