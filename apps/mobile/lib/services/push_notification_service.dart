@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -180,28 +181,69 @@ class PushNotificationService {
       if (senderId != null && ciphertext != null) {
         // Retrieve keys from Hive to decrypt
         final secureBox = await Hive.openBox('secure_vault');
-        final myPrivBase64 = secureBox.get('private_key') as String?;
-        final myPubBase64 = secureBox.get('public_key') as String?;
-        final recipientPublicKeyBase64 = secureBox.get('recipient_pub_$senderId') as String?;
-
-        String decryptedText = '[Encrypted message]';
-        if (myPrivBase64 != null && myPubBase64 != null && recipientPublicKeyBase64 != null) {
+        String decryptedText = '[End-to-End Encrypted Message]';
+        
+        final sessionJson = secureBox.get('session_$senderId') as String?;
+        if (sessionJson != null && sessionJson.isNotEmpty) {
           try {
             final crypto = EncryptionService();
-            final myKeyPair = await crypto.importKeyPair(myPubBase64, myPrivBase64);
-            final sharedSessionKey = await crypto.deriveSharedSecret(
-              myKeyPair: myKeyPair,
-              recipientPublicBase64: recipientPublicKeyBase64,
-            );
-
-            decryptedText = await crypto.decryptMessage(
+            final session = DoubleRatchetSession.fromJson(jsonDecode(sessionJson));
+            
+            decryptedText = await crypto.decrypt(
+              session: session,
               encryptedPacketBase64: ciphertext,
-              secretKey: sharedSessionKey,
             );
+            
+            // Save updated session state
+            await secureBox.put('session_$senderId', jsonEncode(session.toJson()));
           } catch (e) {
+            debugPrint('Background notification decryption failed: $e');
             decryptedText = '[Decryption failed — secure handshake mismatch]';
           }
+        } else {
+          // Handshake Receiver initialization in background
+          try {
+            final crypto = EncryptionService();
+            final decodedJson = utf8.decode(base64Decode(ciphertext));
+            final packet = jsonDecode(decodedJson) as Map<String, dynamic>;
+            final headerJson = utf8.decode(base64Decode(packet['header']));
+            final header = jsonDecode(headerJson) as Map<String, dynamic>;
+            final peerEphemeralPub = header['dh_pub'] as String;
+
+            // Fetch bundle
+            final aliceBundle = await ApiService().fetchPublicKey(senderId);
+            if (aliceBundle != null) {
+              final myDhPriv = secureBox.get('identity_dh_private_key') as String?;
+              final myDhPub = secureBox.get('identity_dh_public_key') as String?;
+              final mySpkPriv = secureBox.get('signed_prekey_private_key') as String?;
+              final mySpkPub = secureBox.get('signed_prekey_public_key') as String?;
+
+              if (myDhPriv != null && myDhPub != null && mySpkPriv != null && mySpkPub != null) {
+                final session = await crypto.initReceiverSession(
+                  peerUsername: senderId,
+                  myDhIdentityPrivateBase64: myDhPriv,
+                  myDhIdentityPublicBase64: myDhPub,
+                  mySignedPrekeyPrivateBase64: mySpkPriv,
+                  mySignedPrekeyPublicBase64: mySpkPub,
+                  peerIdentityDhPublicBase64: aliceBundle['dh_identity_key'],
+                  peerEphemeralPublicBase64: peerEphemeralPub,
+                );
+
+                await secureBox.put('recipient_sign_pub_$senderId', aliceBundle['identity_key']);
+
+                decryptedText = await crypto.decrypt(
+                  session: session,
+                  encryptedPacketBase64: ciphertext,
+                );
+
+                await secureBox.put('session_$senderId', jsonEncode(session.toJson()));
+              }
+            }
+          } catch (e) {
+            debugPrint('Background handshake initialization failed: $e');
+          }
         }
+      }
 
         // Save decrypted message to database (unless it's already saved by chat screen)
         final storage = MessageStorageService();

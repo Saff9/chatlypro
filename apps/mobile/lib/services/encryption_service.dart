@@ -492,4 +492,99 @@ class EncryptionService {
 
     return blocks.join(' ');
   }
+
+  // ─── Legacy Cryptographic Helpers (For P2P Offline Mesh only) ───────────────
+
+  /// Generates a new X25519 keypair
+  Future<SimpleKeyPair> generateKeyPair() async {
+    return await _x25519.newKeyPair();
+  }
+
+  /// Exports a public key to base64
+  Future<String> exportPublicKey(SimpleKeyPair keyPair) async {
+    final publicKey = await keyPair.extractPublicKey();
+    return base64Encode(publicKey.bytes);
+  }
+
+  /// Exports a private key to base64
+  Future<String> exportPrivateKey(SimpleKeyPair keyPair) async {
+    final privateKeyBytes = await keyPair.extractPrivateKeyBytes();
+    return base64Encode(privateKeyBytes);
+  }
+
+  /// Imports an X25519 keypair from base64
+  Future<SimpleKeyPair> importKeyPair(String publicBase64, String privateBase64) async {
+    final publicBytes = base64Decode(publicBase64);
+    final privateBytes = base64Decode(privateBase64);
+    
+    return SimpleKeyPairData(
+      privateBytes,
+      publicKey: SimplePublicKey(publicBytes, type: KeyPairType.x25519),
+      type: KeyPairType.x25519,
+    );
+  }
+
+  /// Performs a static DH agreement
+  Future<SecretKey> deriveSharedSecret({
+    required SimpleKeyPair myKeyPair,
+    required String recipientPublicBase64,
+  }) async {
+    final recipientBytes = base64Decode(recipientPublicBase64);
+    final recipientPublicKey = SimplePublicKey(recipientBytes, type: KeyPairType.x25519);
+
+    return await _x25519.sharedSecretKey(
+      keyPair: myKeyPair,
+      remotePublicKey: recipientPublicKey,
+    );
+  }
+
+  /// Encrypts using AES-256-GCM
+  Future<String> encryptMessage({
+    required String plaintext,
+    required SecretKey secretKey,
+  }) async {
+    final cleartextBytes = utf8.encode(plaintext);
+    final secretBox = await _cipher.encrypt(
+      cleartextBytes,
+      secretKey: secretKey,
+    );
+
+    final packet = {
+      'cipher': base64Encode(secretBox.cipherText),
+      'nonce': base64Encode(secretBox.nonce),
+      'mac': base64Encode(secretBox.mac.bytes),
+    };
+
+    return base64Encode(utf8.encode(jsonEncode(packet)));
+  }
+
+  /// Decrypts using AES-256-GCM
+  Future<String> decryptMessage({
+    required String encryptedPacketBase64,
+    required SecretKey secretKey,
+  }) async {
+    try {
+      final decodedJson = utf8.decode(base64Decode(encryptedPacketBase64));
+      final packet = jsonDecode(decodedJson) as Map<String, dynamic>;
+
+      final cipherText = base64Decode(packet['cipher']);
+      final nonce = base64Decode(packet['nonce']);
+      final macBytes = base64Decode(packet['mac']);
+
+      final secretBox = SecretBox(
+        cipherText,
+        nonce: nonce,
+        mac: Mac(macBytes),
+      );
+
+      final cleartextBytes = await _cipher.decrypt(
+        secretBox,
+        secretKey: secretKey,
+      );
+
+      return utf8.decode(cleartextBytes);
+    } catch (e) {
+      throw Exception('Decryption failed: Integrity check or key mismatch.');
+    }
+  }
 }
