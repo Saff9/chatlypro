@@ -130,10 +130,13 @@ const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS public_keys (
     user_id           UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     identity_key      TEXT NOT NULL,
+    dh_identity_key   TEXT NOT NULL DEFAULT '',
     signed_prekey     TEXT NOT NULL,
     prekey_signature  TEXT NOT NULL,
     updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
+
+  ALTER TABLE public_keys ADD COLUMN IF NOT EXISTS dh_identity_key TEXT NOT NULL DEFAULT '';
 
   CREATE TABLE IF NOT EXISTS friendships (
     user_id_a  UUID REFERENCES users(id) ON DELETE CASCADE,

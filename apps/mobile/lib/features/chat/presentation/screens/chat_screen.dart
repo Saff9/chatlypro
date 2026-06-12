@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cryptography/cryptography.dart';
@@ -58,7 +59,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   StreamSubscription? _socketSubscription;
   StreamSubscription? _stateSubscription;
   Timer? _expiryTimer;
-  SecretKey? _sharedSessionKey;
+  DoubleRatchetSession? _session;
   bool _isServiceReady = false;
 
   // UI state
@@ -106,38 +107,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
   Future<void> _initializeE2E() async {
     final secureBox = await Hive.openBox('secure_vault');
-    final myPrivBase64 = secureBox.get('private_key');
-    final myPubBase64 = secureBox.get('public_key');
-
-    if (myPrivBase64 != null && myPubBase64 != null) {
-      final crypto = EncryptionService();
-      final myKeyPair = await crypto.importKeyPair(myPubBase64, myPrivBase64);
-
-      // Try cached key first
-      String? recipientPublicKeyBase64 =
-          secureBox.get('recipient_pub_${widget.chatData.username}') as String?;
-
-      // If not cached, fetch from server (real key exchange)
-      if (recipientPublicKeyBase64 == null || recipientPublicKeyBase64.isEmpty) {
-        recipientPublicKeyBase64 =
-            await ApiService().fetchPublicKey(widget.chatData.username);
-        if (recipientPublicKeyBase64 != null) {
-          // Cache the fetched key locally
-          await secureBox.put(
-              'recipient_pub_${widget.chatData.username}', recipientPublicKeyBase64);
-        }
-      }
-
-      if (recipientPublicKeyBase64 != null) {
-        _sharedSessionKey = await crypto.deriveSharedSecret(
-          myKeyPair: myKeyPair,
-          recipientPublicBase64: recipientPublicKeyBase64,
-        );
+    
+    // Check if we already have an active Double Ratchet session
+    final sessionJson = secureBox.get('session_${widget.chatData.username}') as String?;
+    if (sessionJson != null && sessionJson.isNotEmpty) {
+      try {
+        _session = DoubleRatchetSession.fromJson(jsonDecode(sessionJson));
         if (mounted) setState(() => _isServiceReady = true);
-      } else {
-        // Recipient has not uploaded their key yet — show waiting state
-        // Do NOT generate a fake key — that breaks decryption completely
-        if (mounted) setState(() => _isServiceReady = false);
+      } catch (e) {
+        debugPrint('Error loading Double Ratchet session: $e');
+      }
+    }
+
+    // If session is not ready, establish the handshake (initiator side)
+    if (_session == null) {
+      final bundle = await ApiService().fetchPublicKey(widget.chatData.username);
+      if (bundle != null && bundle['identity_key'] != null) {
+        try {
+          final myDhPriv = secureBox.get('identity_dh_private_key') as String?;
+          final myDhPub = secureBox.get('identity_dh_public_key') as String?;
+          
+          if (myDhPriv != null && myDhPub != null) {
+            final crypto = EncryptionService();
+            _session = await crypto.initInitiatorSession(
+              peerUsername: widget.chatData.username,
+              myDhIdentityPrivateBase64: myDhPriv,
+              myDhIdentityPublicBase64: myDhPub,
+              peerIdentitySignPublicBase64: bundle['identity_key'],
+              peerIdentityDhPublicBase64: bundle['dh_identity_key'],
+              peerSignedPrekeyPublicBase64: bundle['signed_prekey'],
+              peerSignatureBase64: bundle['prekey_signature'],
+            );
+
+            // Cache peer keys for safety numbers verification dialog
+            await secureBox.put('recipient_sign_pub_${widget.chatData.username}', bundle['identity_key']);
+
+            // Save the session
+            await secureBox.put('session_${widget.chatData.username}', jsonEncode(_session!.toJson()));
+            if (mounted) setState(() => _isServiceReady = true);
+          }
+        } catch (e) {
+          debugPrint('Error initiating Double Ratchet session: $e');
+        }
       }
     }
 
@@ -157,12 +168,58 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       setState(() => _isTyping = payload['isTyping'] ?? false);
     } else if (payload['type'] == 'message') {
       final ciphertext = payload['ciphertext'];
-      if (ciphertext != null && _sharedSessionKey != null) {
+      if (ciphertext != null) {
         try {
-          final plaintext = await EncryptionService().decryptMessage(
+          final secureBox = await Hive.openBox('secure_vault');
+          String? sessionJson = secureBox.get('session_${widget.chatData.username}') as String?;
+          DoubleRatchetSession session;
+
+          if (sessionJson != null && sessionJson.isNotEmpty) {
+            session = DoubleRatchetSession.fromJson(jsonDecode(sessionJson));
+          } else {
+            // Handshake Receiver initialization
+            // First decode the header to get Alice's ephemeral key
+            final decodedJson = utf8.decode(base64Decode(ciphertext));
+            final packet = jsonDecode(decodedJson) as Map<String, dynamic>;
+            final headerJson = utf8.decode(base64Decode(packet['header']));
+            final header = jsonDecode(headerJson) as Map<String, dynamic>;
+            final peerEphemeralPub = header['dh_pub'] as String;
+
+            // Fetch Alice's prekey bundle from server to get her identity keys
+            final aliceBundle = await ApiService().fetchPublicKey(widget.chatData.username);
+            if (aliceBundle == null) throw Exception('Handshake failed: cannot fetch sender bundle.');
+
+            // Read my keys
+            final myDhPriv = secureBox.get('identity_dh_private_key') as String;
+            final myDhPub = secureBox.get('identity_dh_public_key') as String;
+            final mySpkPriv = secureBox.get('signed_prekey_private_key') as String;
+            final mySpkPub = secureBox.get('signed_prekey_public_key') as String;
+
+            session = await EncryptionService().initReceiverSession(
+              peerUsername: widget.chatData.username,
+              myDhIdentityPrivateBase64: myDhPriv,
+              myDhIdentityPublicBase64: myDhPub,
+              mySignedPrekeyPrivateBase64: mySpkPriv,
+              mySignedPrekeyPublicBase64: mySpkPub,
+              peerIdentityDhPublicBase64: aliceBundle['dh_identity_key'],
+              peerEphemeralPublicBase64: peerEphemeralPub,
+            );
+
+            // Cache peer keys for safety numbers verification dialog
+            await secureBox.put('recipient_sign_pub_${widget.chatData.username}', aliceBundle['identity_key']);
+          }
+
+          // Decrypt the message using Double Ratchet
+          final plaintext = await EncryptionService().decrypt(
+            session: session,
             encryptedPacketBase64: ciphertext,
-            secretKey: _sharedSessionKey!,
           );
+
+          // Save the advanced session state
+          await secureBox.put('session_${widget.chatData.username}', jsonEncode(session.toJson()));
+          _session = session;
+          _isServiceReady = true;
+
           final newMsg = MessageData(
             id: DateTime.now().microsecondsSinceEpoch.toString(),
             text: plaintext,
@@ -177,7 +234,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           );
           await MessageStorageService().saveMessage(widget.chatData.username, newMsg);
           _addMessageAndCheckLimit(newMsg);
-        } catch (_) {
+        } catch (e) {
+          debugPrint('Decryption error: $e');
           final errMsg = MessageData(
             id: DateTime.now().microsecondsSinceEpoch.toString(),
             text: '[Decryption failed — secure handshake mismatch]',
@@ -342,11 +400,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     await MessageStorageService().saveMessage(widget.chatData.username, newMessage);
     _addMessageAndCheckLimit(newMessage);
 
-    if (_sharedSessionKey != null && _isServiceReady) {
-      final ciphertext = await EncryptionService().encryptMessage(
+    if (_session != null && _isServiceReady) {
+      final ciphertext = await EncryptionService().encrypt(
+        session: _session!,
         plaintext: text,
-        secretKey: _sharedSessionKey!,
       );
+      
+      // Save updated Double Ratchet session state
+      final secureBox = await Hive.openBox('secure_vault');
+      await secureBox.put('session_${widget.chatData.username}', jsonEncode(_session!.toJson()));
+
       final wasSent = await WebSocketService().sendMessage(
         recipientId: widget.chatData.username,
         ciphertext: ciphertext,
@@ -1459,6 +1522,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             tooltip: 'Export Transcript',
             onPressed: _exportChatTranscript,
           ),
+          IconButton(
+            icon: const Icon(Icons.verified_user_rounded),
+            tooltip: 'Verify Safety Numbers',
+            onPressed: _showSafetyNumbersDialog,
+            color: const Color(0xFF10B981),
+          ),
         ],
       ),
       body: SafeArea(
@@ -2166,6 +2235,103 @@ class _RecordingWaveformState extends State<_RecordingWaveform> with SingleTicke
           );
         }).toList(),
       ),
+  void _showSafetyNumbersDialog() async {
+    final secureBox = await Hive.openBox('secure_vault');
+    final mySignPub = secureBox.get('identity_sign_public_key') as String?;
+    final peerSignPub = secureBox.get('recipient_sign_pub_${widget.chatData.username}') as String?;
+
+    if (mySignPub == null || peerSignPub == null) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF13131B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Colors.white10),
+          ),
+          title: const Text('Safety Numbers', style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'Safety numbers cannot be computed because a secure handshake has not been fully completed yet. Please send or receive a message first.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK', style: TextStyle(color: Color(0xFF6366F1))),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final fingerprint = EncryptionService().deriveFingerprint(mySignPub, peerSignPub);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF13131B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: const BorderSide(color: Colors.white10),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.verified_user_rounded, color: Color(0xFF10B981)),
+            SizedBox(width: 10),
+            Text('Verify Safety Numbers', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Safety numbers verify that messages and calls with this contact are end-to-end encrypted with Double Ratchet. To verify, compare these numbers with their device.',
+              style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.45),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.black24,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white10),
+              ),
+              child: Text(
+                fingerprint,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFF10B981),
+                  fontFamily: 'monospace',
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            // High-tech stylized mock QR code
+            Container(
+              width: 140,
+              height: 140,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: CustomPaint(
+                painter: _MockQrCodePainter(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close', style: TextStyle(color: Colors.white60)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2198,6 +2364,54 @@ class ChatWallpaperPainter extends CustomPainter {
         canvas.drawCircle(Offset(x + 45, y + 35), 3, paint);
         canvas.drawRect(Rect.fromLTWH(x + 43, y + 35, 4, 4), paint);
       }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _MockQrCodePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.black
+      ..style = PaintingStyle.fill;
+
+    // Draw the three corner squares of a QR code
+    final squareSize = size.width * 0.25;
+    
+    // Top-left
+    canvas.drawRect(Rect.fromLTWH(0, 0, squareSize, squareSize), paint);
+    canvas.drawRect(Rect.fromLTWH(squareSize * 0.2, squareSize * 0.2, squareSize * 0.6, squareSize * 0.6), Paint()..color = Colors.white);
+    canvas.drawRect(Rect.fromLTWH(squareSize * 0.35, squareSize * 0.35, squareSize * 0.3, squareSize * 0.3), paint);
+
+    // Top-right
+    canvas.drawRect(Rect.fromLTWH(size.width - squareSize, 0, squareSize, squareSize), paint);
+    canvas.drawRect(Rect.fromLTWH(size.width - squareSize + squareSize * 0.2, squareSize * 0.2, squareSize * 0.6, squareSize * 0.6), Paint()..color = Colors.white);
+    canvas.drawRect(Rect.fromLTWH(size.width - squareSize + squareSize * 0.35, squareSize * 0.35, squareSize * 0.3, squareSize * 0.3), paint);
+
+    // Bottom-left
+    canvas.drawRect(Rect.fromLTWH(0, size.height - squareSize, squareSize, squareSize), paint);
+    canvas.drawRect(Rect.fromLTWH(squareSize * 0.2, size.height - squareSize + squareSize * 0.2, squareSize * 0.6, squareSize * 0.6), Paint()..color = Colors.white);
+    canvas.drawRect(Rect.fromLTWH(squareSize * 0.35, size.height - squareSize + squareSize * 0.35, squareSize * 0.3, squareSize * 0.3), paint);
+
+    // Draw some random smaller mock blocks in the center and bottom-right
+    final random = [
+      Rect.fromLTWH(size.width * 0.4, size.height * 0.1, 8, 8),
+      Rect.fromLTWH(size.width * 0.5, size.height * 0.2, 12, 6),
+      Rect.fromLTWH(size.width * 0.45, size.height * 0.35, 6, 12),
+      Rect.fromLTWH(size.width * 0.6, size.height * 0.4, 8, 8),
+      Rect.fromLTWH(size.width * 0.35, size.height * 0.6, 10, 10),
+      Rect.fromLTWH(size.width * 0.7, size.height * 0.6, 6, 16),
+      Rect.fromLTWH(size.width * 0.6, size.height * 0.75, 12, 12),
+      Rect.fromLTWH(size.width * 0.75, size.height * 0.75, 8, 8),
+      Rect.fromLTWH(size.width * 0.8, size.height * 0.45, 12, 8),
+      Rect.fromLTWH(size.width * 0.4, size.height * 0.8, 14, 6),
+    ];
+
+    for (final r in random) {
+      canvas.drawRect(r, paint);
     }
   }
 

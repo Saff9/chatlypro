@@ -80,15 +80,18 @@ class AuthService {
     required String username,
   }) async {
     try {
-      // 1. Generate local keypair
-      final keyPair = await _crypto.generateKeyPair();
-      final pubKeyBase64 = await _crypto.exportPublicKey(keyPair);
-      final privKeyBase64 = await _crypto.exportPrivateKey(keyPair);
+      // 1. Generate Double Ratchet identity keys and prekey bundle
+      final bundle = await _crypto.generateIdentityKeys();
 
       // Save keys temporarily in secure Hive so we don't lose them before verification
       final secureBox = await Hive.openBox('secure_vault');
-      await secureBox.put('public_key', pubKeyBase64);
-      await secureBox.put('private_key', privKeyBase64);
+      await secureBox.put('identity_sign_public_key', bundle['identity_sign_public_key']);
+      await secureBox.put('identity_sign_private_key', bundle['identity_sign_private_key']);
+      await secureBox.put('identity_dh_public_key', bundle['identity_dh_public_key']);
+      await secureBox.put('identity_dh_private_key', bundle['identity_dh_private_key']);
+      await secureBox.put('signed_prekey_public_key', bundle['signed_prekey_public_key']);
+      await secureBox.put('signed_prekey_private_key', bundle['signed_prekey_private_key']);
+      await secureBox.put('signed_prekey_signature', bundle['signed_prekey_signature']);
 
       // 2. API Signup Call
       final response = await _dio.post('/auth/register', data: {
@@ -169,12 +172,15 @@ class AuthService {
         await secureBox.put('username', _username);
 
         // If keys don't exist locally, generate them (recovery fallback)
-        if (!secureBox.containsKey('private_key')) {
-          final keyPair = await _crypto.generateKeyPair();
-          final pubKeyBase64 = await _crypto.exportPublicKey(keyPair);
-          final privKeyBase64 = await _crypto.exportPrivateKey(keyPair);
-          await secureBox.put('public_key', pubKeyBase64);
-          await secureBox.put('private_key', privKeyBase64);
+        if (!secureBox.containsKey('identity_sign_private_key')) {
+          final bundle = await _crypto.generateIdentityKeys();
+          await secureBox.put('identity_sign_public_key', bundle['identity_sign_public_key']);
+          await secureBox.put('identity_sign_private_key', bundle['identity_sign_private_key']);
+          await secureBox.put('identity_dh_public_key', bundle['identity_dh_public_key']);
+          await secureBox.put('identity_dh_private_key', bundle['identity_dh_private_key']);
+          await secureBox.put('signed_prekey_public_key', bundle['signed_prekey_public_key']);
+          await secureBox.put('signed_prekey_private_key', bundle['signed_prekey_private_key']);
+          await secureBox.put('signed_prekey_signature', bundle['signed_prekey_signature']);
         }
 
         WebSocketService().connect(url: AppConfig.wsBaseUrl, token: _token!);
@@ -326,9 +332,17 @@ class AuthService {
   void _uploadPublicKeyIfNeeded() async {
     try {
       final secureBox = await Hive.openBox('secure_vault');
-      final pubKey = secureBox.get('public_key') as String?;
-      if (pubKey != null && pubKey.isNotEmpty) {
-        await ApiService().uploadPublicKey(pubKey);
+      final idSignPub = secureBox.get('identity_sign_public_key') as String?;
+      final idDhPub = secureBox.get('identity_dh_public_key') as String?;
+      final spkPub = secureBox.get('signed_prekey_public_key') as String?;
+      final spkSig = secureBox.get('signed_prekey_signature') as String?;
+      if (idSignPub != null && idSignPub.isNotEmpty) {
+        await ApiService().uploadPublicKey(
+          identityKey: idSignPub,
+          dhIdentityKey: idDhPub ?? '',
+          signedPrekey: spkPub ?? '',
+          prekeySignature: spkSig ?? '',
+        );
       }
     } catch (e) {
       debugPrint('_uploadPublicKeyIfNeeded: $e');

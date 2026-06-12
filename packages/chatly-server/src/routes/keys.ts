@@ -10,45 +10,37 @@ import { verifyToken } from './auth';
 export async function keysRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
 
   // POST /api/keys/upload
-  // Upload (or refresh) the current user's X25519 public identity key.
-  // Body: { "identity_key": "<base64-encoded X25519 public key>" }
-  // Called by the Flutter client after registration or login.
+  // Upload (or refresh) the current user's cryptographic identity keys and prekey bundle.
+  // Body: { "identity_key": "...", "dh_identity_key": "...", "signed_prekey": "...", "prekey_signature": "..." }
   fastify.post('/upload', async (request, reply) => {
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const { identity_key } = request.body as any;
+    const { identity_key, dh_identity_key, signed_prekey, prekey_signature } = request.body as any;
 
-    if (!identity_key || typeof identity_key !== 'string') {
-      return reply.code(400).send({ error: 'identity_key is required and must be a base64 string' });
-    }
-
-    // Basic length sanity check for X25519 public key (32 bytes = 44 base64 chars)
-    if (identity_key.length < 40 || identity_key.length > 100) {
-      return reply.code(400).send({ error: 'identity_key has invalid length for an X25519 public key' });
+    if (!identity_key || !dh_identity_key || !signed_prekey || !prekey_signature) {
+      return reply.code(400).send({ error: 'All bundle fields are required: identity_key, dh_identity_key, signed_prekey, prekey_signature' });
     }
 
     try {
-      // Upsert: insert or update if already exists
+      // Upsert the public keys
       await pool.query(
-        `INSERT INTO public_keys (user_id, identity_key, signed_prekey, prekey_signature, updated_at)
-         VALUES ($1, $2, '', '', NOW())
+        `INSERT INTO public_keys (user_id, identity_key, dh_identity_key, signed_prekey, prekey_signature, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
          ON CONFLICT (user_id)
-         DO UPDATE SET identity_key = $2, updated_at = NOW()`,
-        [user.userId, identity_key]
+         DO UPDATE SET identity_key = $2, dh_identity_key = $3, signed_prekey = $4, prekey_signature = $5, updated_at = NOW()`,
+        [user.userId, identity_key, dh_identity_key, signed_prekey, prekey_signature]
       );
 
       return reply.send({ success: true });
     } catch (err: any) {
       fastify.log.error(err, 'POST /keys/upload: DB error');
-      return reply.code(500).send({ error: 'Failed to store key. Please try again.' });
+      return reply.code(500).send({ error: 'Failed to store bundle. Please try again.' });
     }
   });
 
   // GET /api/keys/:username
-  // Fetch the X25519 public identity key for a given username.
-  // Required by the Flutter client before starting an encrypted chat.
-  // Returns null identity_key if the user has not uploaded a key yet.
+  // Fetch the cryptographic prekey bundle for a given username.
   fastify.get('/:username', async (request, reply) => {
     const caller = verifyToken(request.headers.authorization);
     if (!caller) return reply.code(401).send({ error: 'Unauthorized' });
@@ -65,7 +57,7 @@ export async function keysRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
     try {
       const result = await pool.query(
-        `SELECT pk.identity_key
+        `SELECT pk.identity_key, pk.dh_identity_key, pk.signed_prekey, pk.prekey_signature
          FROM public_keys pk
          JOIN users u ON pk.user_id = u.id
          WHERE LOWER(u.username) = $1`,
@@ -73,14 +65,19 @@ export async function keysRoutes(fastify: FastifyInstance, _options: FastifyPlug
       );
 
       if (result.rows.length === 0) {
-        // User exists but has not uploaded a key yet — client should wait
         return reply.send({ identity_key: null, found: false });
       }
 
-      return reply.send({ identity_key: result.rows[0].identity_key, found: true });
+      return reply.send({
+        identity_key: result.rows[0].identity_key,
+        dh_identity_key: result.rows[0].dh_identity_key,
+        signed_prekey: result.rows[0].signed_prekey,
+        prekey_signature: result.rows[0].prekey_signature,
+        found: true
+      });
     } catch (err: any) {
       fastify.log.error(err, 'GET /keys/:username: DB error');
-      return reply.code(500).send({ error: 'Failed to retrieve key. Please try again.' });
+      return reply.code(500).send({ error: 'Failed to retrieve keys. Please try again.' });
     }
   });
 }
