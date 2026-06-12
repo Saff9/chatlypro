@@ -41,7 +41,7 @@ jobs:
 
       # Decode the base64-encoded keystore stored in GitHub Secrets
       - name: Decode release keystore
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
         working-directory: apps/mobile/android
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}

@@ -12,7 +12,8 @@ plugins {
 // In local dev: credentials come from android/keystore.properties (gitignored).
 // If neither is present, the debug key is used as a fallback for local dev only.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
-val useReleaseKey = System.getenv("KEYSTORE_BASE64") != null ||
+val keystoreBase64 = System.getenv("KEYSTORE_BASE64")
+val useReleaseKey = (!keystoreBase64.isNullOrEmpty()) ||
         (keystorePropertiesFile.exists() && keystorePropertiesFile.canRead())
 
 android {
@@ -39,9 +40,14 @@ android {
     signingConfigs {
         if (useReleaseKey) {
             create("release") {
-                if (System.getenv("KEYSTORE_BASE64") != null) {
+                if (!keystoreBase64.isNullOrEmpty()) {
                     // CI: keystore written to file by workflow, path in env
-                    storeFile = file(System.getenv("KEYSTORE_PATH") ?: "keystore.jks")
+                    val keystorePath = System.getenv("KEYSTORE_PATH")
+                    storeFile = if (keystorePath.isNullOrEmpty()) {
+                        file("keystore.jks")
+                    } else {
+                        file(keystorePath)
+                    }
                     storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
                     keyAlias = System.getenv("KEY_ALIAS") ?: ""
                     keyPassword = System.getenv("KEY_PASSWORD") ?: ""
