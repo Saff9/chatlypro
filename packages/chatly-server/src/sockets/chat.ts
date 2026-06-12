@@ -5,7 +5,7 @@ import { redisClient, scanKeys } from '../db/redis';
 import { pool } from '../db';
 import { sendSilentPush } from '../services/push';
 
-const JWT_SECRET = process.env.JWT_SECRET!;
+const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-prod';
 
 // Safe send helper to catch WebSocket errors gracefully and prevent process crashes
 export function safeSend(ws: WebSocket, payload: string) {
@@ -308,6 +308,16 @@ async function relayGroupMessage(senderUsername: string, groupId: string, cipher
     const senderRes = await pool.query('SELECT id FROM users WHERE username = $1', [senderUsername]);
     if (senderRes.rows.length === 0) return;
     const senderId = senderRes.rows[0].id;
+
+    // Verify group membership before inserting and relaying message
+    const checkMembership = await pool.query(
+      'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+      [groupId, senderId]
+    );
+    if (checkMembership.rows.length === 0) {
+      console.warn(`[SECURITY WARNING] User ${senderUsername} (${senderId}) attempted to send a message to group ${groupId} without membership.`);
+      return;
+    }
 
     await pool.query(
       'INSERT INTO group_messages (group_id, sender_id, text) VALUES ($1, $2, $3)',

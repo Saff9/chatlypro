@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { initializeApp, cert } from 'firebase-admin/app';
+import { getMessaging, Message } from 'firebase-admin/messaging';
 import dotenv from 'dotenv';
 import fs from 'fs';
 
@@ -12,8 +13,8 @@ try {
   if (fs.existsSync(serviceAccountPath)) {
     console.log(`Initializing Firebase Admin using credentials from ${serviceAccountPath}...`);
     const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+    initializeApp({
+      credential: cert(serviceAccount),
     });
     isFirebaseInitialized = true;
     console.log('Firebase Admin initialized successfully.');
@@ -37,7 +38,7 @@ export async function sendSilentPush(pushToken: string, messageId: string): Prom
     return true;
   }
 
-  const message: admin.messaging.Message = {
+  const message: Message = {
     token: pushToken,
     data: {
       type: 'sync',
@@ -61,7 +62,7 @@ export async function sendSilentPush(pushToken: string, messageId: string): Prom
   };
 
   try {
-    const response = await admin.messaging().send(message);
+    const response = await getMessaging().send(message);
     console.log('Successfully sent silent sync push:', response);
     return true;
   } catch (error) {

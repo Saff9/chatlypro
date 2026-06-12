@@ -58,6 +58,12 @@ try {
 const sslConfig = isLocal ? false : { rejectUnauthorized: false };
 
 // ─── Connection Pool ──────────────────────────────────────────────────────────
+let isConnected = false;
+
+export function isDbConnected(): boolean {
+  return isConnected;
+}
+
 export const pool = new Pool({
   connectionString: databaseUrl,
   ssl: sslConfig,
@@ -262,6 +268,7 @@ export async function initializeDatabase(maxAttempts = 3): Promise<boolean> {
       await client.query(SCHEMA_SQL);
       await migrateLegacyEmails(client);
       console.log('[Database] Schema ready and migrations applied.');
+      isConnected = true;
       return true;
     } catch (err: any) {
       lastError = err;
@@ -286,5 +293,6 @@ export async function initializeDatabase(maxAttempts = 3): Promise<boolean> {
   // The server will start up and return errors from DB-dependent routes.
   console.error(`[Database] All ${maxAttempts} connection attempts failed. Last error: ${lastError?.message}`);
   console.error('[Database] Server will start without a database connection. Fix DATABASE_URL in Render environment variables.');
+  isConnected = false;
   return false;
 }

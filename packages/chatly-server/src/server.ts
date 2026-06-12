@@ -3,7 +3,7 @@ import fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
 import dotenv from 'dotenv';
-import { initializeDatabase } from './db';
+import { initializeDatabase, isDbConnected } from './db';
 import { authRoutes } from './routes/auth';
 import { pulseRoutes, userRoutes, groupRoutes } from './routes/social';
 import { keysRoutes } from './routes/keys';
@@ -38,6 +38,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 // ─── Server Initialization ────────────────────────────────────────────────────
 const server = fastify({
+  trustProxy: true,
   logger: {
     // Pretty-print in dev for readability; use JSON in production for log aggregators.
     transport: NODE_ENV !== 'production'
@@ -90,13 +91,24 @@ server.register(async (fastifyInstance) => {
 });
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
-server.get('/', async () => ({
-  name: 'Chatly Secure Backend Relay',
-  version: '1.0.0',
-  environment: NODE_ENV,
-  status: 'running',
-  timestamp: new Date().toISOString(),
-}));
+server.get('/', async (request, reply) => {
+  const dbOk = isDbConnected();
+  if (!dbOk) {
+    return reply.code(503).send({
+      name: 'Chatly Secure Backend Relay',
+      status: 'unhealthy',
+      error: 'Database is disconnected',
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return {
+    name: 'Chatly Secure Backend Relay',
+    version: '1.0.0',
+    environment: NODE_ENV,
+    status: 'running',
+    timestamp: new Date().toISOString(),
+  };
+});
 
 // ─── Boot Sequence ────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT || '5000', 10);

@@ -24,6 +24,9 @@ void main() async {
   );
 
   String? aesKeyBase64;
+  bool hasSecurityError = false;
+  String? securityErrorMsg;
+
   try {
     aesKeyBase64 = await secureStorage.read(key: 'hive_aes_key');
     if (aesKeyBase64 == null) {
@@ -40,11 +43,63 @@ void main() async {
       await secureStorage.write(key: 'hive_aes_key', value: aesKeyBase64);
     } catch (err) {
       debugPrint('Secure storage recovery failed: $err');
-      // Final resilient fallback: use a static/default key so the app does not crash on startup
-      aesKeyBase64 = base64Encode(List.generate(32, (i) => i));
+      hasSecurityError = true;
+      securityErrorMsg = err.toString();
     }
   }
-  final encryptionKey = HiveAesCipher(base64Decode(aesKeyBase64));
+
+  if (hasSecurityError) {
+    runApp(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          backgroundColor: const Color(0xFF13131B),
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: Colors.redAccent,
+                      size: 64,
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Security Initialization Failed',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFE4E1ED),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'The secure hardware storage (Keystore/Keychain) on this device could not be initialized. '
+                      'To protect your privacy and keys, Chatly cannot proceed.\n\nError details: $securityErrorMsg',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.white70,
+                        height: 1.5,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+
+  final encryptionKey = HiveAesCipher(base64Decode(aesKeyBase64!));
 
   // Open settings unencrypted (no secrets stored there)
   await Hive.openBox('settings');

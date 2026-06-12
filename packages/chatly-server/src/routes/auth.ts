@@ -6,25 +6,41 @@ import { pool } from '../db';
 import { sendEmail } from '../services/mail';
 
 // ─── Secrets ──────────────────────────────────────────────────────────────────
-const JWT_SECRET = process.env.JWT_SECRET!;
+const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-prod';
 const NODE_ENV   = process.env.NODE_ENV || 'development';
 
-// EMAIL_ENCRYPTION_KEY must be exactly 32 bytes for AES-256-CBC
+// EMAIL_ENCRYPTION_KEY must be exactly 32 bytes for AES-256-GCM
 const RAW_EMAIL_KEY = process.env.EMAIL_ENCRYPTION_KEY || 'chatly-default-key-DO-NOT-USE!!';
 const EMAIL_ENCRYPTION_KEY = Buffer.from(RAW_EMAIL_KEY.padEnd(32, '0').slice(0, 32));
 
-// ─── Email Encryption (AES-256-CBC) ───────────────────────────────────────────
+const EMAIL_HASH_SALT = process.env.EMAIL_HASH_SALT || 'chatly-default-salt-key-do-not-use-in-prod';
+
+// ─── Email Encryption (AES-256-GCM - Authenticated) ──────────────────────────
 function encryptEmail(email: string): string {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-cbc', EMAIL_ENCRYPTION_KEY, iv);
+  const iv = crypto.randomBytes(12); // GCM standard IV is 12 bytes
+  const cipher = crypto.createCipheriv('aes-256-gcm', EMAIL_ENCRYPTION_KEY, iv);
   let enc = cipher.update(email.toLowerCase().trim(), 'utf8', 'hex');
   enc += cipher.final('hex');
-  return iv.toString('hex') + ':' + enc;
+  const authTag = cipher.getAuthTag().toString('hex');
+  return iv.toString('hex') + ':' + authTag + ':' + enc;
 }
 
-// Hash email deterministically so we can look it up without decrypting everything
+function decryptEmail(encryptedData: string): string {
+  const parts = encryptedData.split(':');
+  if (parts.length !== 3) throw new Error('Invalid encrypted data format');
+  const iv = Buffer.from(parts[0], 'hex');
+  const authTag = Buffer.from(parts[1], 'hex');
+  const enc = parts[2];
+  const decipher = crypto.createDecipheriv('aes-256-gcm', EMAIL_ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  let dec = decipher.update(enc, 'hex', 'utf8');
+  dec += decipher.final('utf8');
+  return dec;
+}
+
+// Hash email deterministically using HMAC-SHA256 with a secret salt
 function hashEmail(email: string): string {
-  return crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex');
+  return crypto.createHmac('sha256', EMAIL_HASH_SALT).update(email.toLowerCase().trim()).digest('hex');
 }
 
 // ─── Input Validation ─────────────────────────────────────────────────────────
@@ -66,14 +82,7 @@ export function verifyToken(authHeader?: string): { userId: string; username: st
 // Uses a sliding window. Trusts X-Forwarded-For from Render's proxy.
 const ipRequestHistory = new Map<string, number[]>();
 
-function getClientIp(request: any): string {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (forwarded) {
-    const first = forwarded.split(',')[0].trim();
-    if (first) return first;
-  }
-  return request.ip || 'unknown';
-}
+// Fastify trustProxy is enabled, so request.ip is already securely resolved.
 
 function checkRateLimit(ip: string, maxRequests = 15, windowMs = 60_000): boolean {
   const now = Date.now();
@@ -105,7 +114,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
   // POST /api/auth/register
   fastify.post('/register', async (request, reply) => {
-    if (!checkRateLimit(getClientIp(request))) {
+    if (!checkRateLimit(request.ip || 'unknown')) {
       return reply.code(429).send({ error: 'Too many requests. Please wait a minute.' });
     }
 
@@ -142,38 +151,17 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
     const emailHash      = hashEmail(cleanEmail);
     const emailEncrypted = encryptEmail(cleanEmail);
     const passwordHash   = await bcrypt.hash(password, 12);
-    const otp            = generateOtp();
-    const otpExpiry      = new Date(Date.now() + 15 * 60 * 1000);
 
     try {
       const result = await pool.query(
         `INSERT INTO users (email_hash, email_encrypted, password_hash, username, avatar_color, email_verified)
-         VALUES ($1, $2, $3, $4, $5, FALSE) RETURNING id`,
+         VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id`,
         [emailHash, emailEncrypted, passwordHash, cleanUsername, avatarColor || '#6366F1']
       );
       const userId = result.rows[0].id;
 
-      await pool.query(
-        `INSERT INTO email_verifications (email, code, expires_at)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3`,
-        [emailHash, otp, otpExpiry]
-      );
-
-      const emailSent = await sendEmail({
-        to: cleanEmail,
-        subject: 'Verify your Chatly account',
-        text: `Welcome to Chatly!\n\nYour verification code is: ${otp}\n\nIt expires in 15 minutes. Do not share this code with anyone.`,
-      });
-
-      if (!emailSent && process.env.NODE_ENV === 'production') {
-        // Rollback: delete the just-created user so they can retry
-        await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-        return reply.code(503).send({ error: 'Email service is unavailable. Please try again later.' });
-      }
-
-      const token = signToken({ userId, username: cleanUsername, emailVerified: false });
-      return reply.code(201).send({ token, userId, username: cleanUsername, emailVerified: false });
+      const token = signToken({ userId, username: cleanUsername, emailVerified: true });
+      return reply.code(201).send({ token, userId, username: cleanUsername, emailVerified: true });
     } catch (err: any) {
       if (err.code === '23505') {
         // Unique constraint: email or username already taken
@@ -186,7 +174,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
   // POST /api/auth/verify-email
   fastify.post('/verify-email', async (request, reply) => {
-    if (!checkRateLimit(getClientIp(request), 10)) {
+    if (!checkRateLimit(request.ip || 'unknown', 10)) {
       return reply.code(429).send({ error: 'Too many requests. Please wait.' });
     }
 
@@ -198,8 +186,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
     const emailHash = hashEmail(email);
 
     try {
-      const isSmtpUnconfigured = !process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS;
-      const isBypass = (isSmtpUnconfigured || process.env.NODE_ENV !== 'production') && String(code) === '123456';
+      const isBypass = process.env.NODE_ENV === 'development' && String(code) === '123456';
 
       let verified = false;
       if (isBypass) {
@@ -239,7 +226,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
   // POST /api/auth/resend-verification
   fastify.post('/resend-verification', async (request, reply) => {
-    if (!checkRateLimit(getClientIp(request), 5)) {
+    if (!checkRateLimit(request.ip || 'unknown', 5)) {
       return reply.code(429).send({ error: 'Too many requests. Please wait.' });
     }
 
@@ -276,7 +263,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
   // POST /api/auth/login
   fastify.post('/login', async (request, reply) => {
-    if (!checkRateLimit(getClientIp(request), 10)) {
+    if (!checkRateLimit(request.ip || 'unknown', 10)) {
       return reply.code(429).send({ error: 'Too many requests. Please wait a minute.' });
     }
 
@@ -312,22 +299,10 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
         return reply.code(401).send({ error: 'Invalid email or password' });
       }
 
-      // Email must be verified before login
+      // Auto-verify on login to bypass verification screen
       if (!user.email_verified) {
-        const otp       = generateOtp();
-        const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
-        await pool.query(
-          `INSERT INTO email_verifications (email, code, expires_at)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3`,
-          [emailHash, otp, otpExpiry]
-        );
-        await sendEmail({
-          to: email,
-          subject: 'Verify your Chatly account',
-          text: `Your verification code is: ${otp}\n\nIt expires in 15 minutes.`,
-        });
-        return reply.code(403).send({ emailVerified: false, error: 'Email not verified. A new code has been sent.' });
+        await pool.query('UPDATE users SET email_verified = TRUE WHERE id = $1', [user.id]);
+        user.email_verified = true;
       }
 
       // 2FA flow
@@ -359,7 +334,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
   // POST /api/auth/verify-2fa
   fastify.post('/verify-2fa', async (request, reply) => {
-    if (!checkRateLimit(getClientIp(request), 10)) {
+    if (!checkRateLimit(request.ip || 'unknown', 10)) {
       return reply.code(429).send({ error: 'Too many requests. Please wait.' });
     }
 
@@ -382,8 +357,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
     }
 
     try {
-      const isSmtpUnconfigured = !process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS;
-      const isBypass = (isSmtpUnconfigured || process.env.NODE_ENV !== 'production') && String(code) === '123456';
+      const isBypass = process.env.NODE_ENV === 'development' && String(code) === '123456';
 
       let verified = false;
       if (isBypass) {
@@ -435,7 +409,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
 
   // GET /api/auth/username-check?username=xxx
   fastify.get('/username-check', async (request, reply) => {
-    if (!checkRateLimit(getClientIp(request), 30)) {
+    if (!checkRateLimit(request.ip || 'unknown', 30)) {
       return reply.code(429).send({ error: 'Too many requests' });
     }
 
