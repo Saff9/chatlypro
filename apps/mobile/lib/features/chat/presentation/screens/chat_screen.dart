@@ -315,40 +315,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    if (_isMessageToxic(text)) {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF13131B),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: const BorderSide(color: Colors.white10),
-          ),
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.orange),
-              SizedBox(width: 10),
-              Text('Toxic Content Warning', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: const Text(
-            'Your message contains potentially offensive language. Do you still want to send it?',
-            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Send Anyway', style: TextStyle(color: Colors.orange)),
-            ),
-          ],
-        ),
-      );
-      if (confirm != true) return;
-    }
+
 
     final settingsBox = Hive.box('settings');
     final bool isDuress = settingsBox.get('is_duress_active', defaultValue: false) as bool;
@@ -2174,67 +2141,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       ),
     );
   }
-}
 
-class _RecordingWaveform extends StatefulWidget {
-  const _RecordingWaveform();
-
-  @override
-  State<_RecordingWaveform> createState() => _RecordingWaveformState();
-}
-
-class _RecordingWaveformState extends State<_RecordingWaveform> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  final List<double> _heights = List.generate(25, (index) => 4.0 + (index % 5) * 4.0);
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    )..repeat(reverse: true);
-    
-    _timer = Timer.periodic(const Duration(milliseconds: 120), (timer) {
-      if (mounted) {
-        setState(() {
-          for (int i = 0; i < _heights.length; i++) {
-            _heights[i] = 4.0 + (16.0 * (0.2 + 0.8 * (i % 3 == 0 ? 0.8 : 0.4)));
-            _heights[i] += (DateTime.now().millisecond % 10);
-            _heights[i] = _heights[i].clamp(4.0, 36.0);
-          }
-        });
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 36,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: _heights.map((h) {
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
-            width: 3,
-            height: h,
-            margin: const EdgeInsets.symmetric(horizontal: 1.5),
-            decoration: BoxDecoration(
-              color: Colors.redAccent.withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(1.5),
-            ),
-          );
-        }).toList(),
-      ),
   void _showSafetyNumbersDialog() async {
     final secureBox = await Hive.openBox('secure_vault');
     final mySignPub = secureBox.get('identity_sign_public_key') as String?;
@@ -2331,6 +2238,69 @@ class _RecordingWaveformState extends State<_RecordingWaveform> with SingleTicke
             child: const Text('Close', style: TextStyle(color: Colors.white60)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RecordingWaveform extends StatefulWidget {
+  const _RecordingWaveform();
+
+  @override
+  State<_RecordingWaveform> createState() => _RecordingWaveformState();
+}
+
+class _RecordingWaveformState extends State<_RecordingWaveform> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  final List<double> _heights = List.generate(25, (index) => 4.0 + (index % 5) * 4.0);
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 100),
+    )..repeat(reverse: true);
+    
+    _timer = Timer.periodic(const Duration(milliseconds: 120), (timer) {
+      if (mounted) {
+        setState(() {
+          for (int i = 0; i < _heights.length; i++) {
+            _heights[i] = 4.0 + (16.0 * (0.2 + 0.8 * (i % 3 == 0 ? 0.8 : 0.4)));
+            _heights[i] += (DateTime.now().millisecond % 10);
+            _heights[i] = _heights[i].clamp(4.0, 36.0);
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 36,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: _heights.map((h) {
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            width: 3,
+            height: h,
+            margin: const EdgeInsets.symmetric(horizontal: 1.5),
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withValues(alpha: 0.8),
+              borderRadius: BorderRadius.circular(1.5),
+            ),
+          );
+        }).toList(),
       ),
     );
   }

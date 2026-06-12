@@ -19,15 +19,15 @@ void main() async {
   // On Android this uses the Android Keystore system.
   // On iOS this uses the Secure Enclave / Keychain.
   // The key never leaves the secure hardware enclave.
-  const _secureStorage = FlutterSecureStorage(
+  const secureStorage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
-  String? aesKeyBase64 = await _secureStorage.read(key: 'hive_aes_key');
+  String? aesKeyBase64 = await secureStorage.read(key: 'hive_aes_key');
   if (aesKeyBase64 == null) {
     final key = Hive.generateSecureKey();
     aesKeyBase64 = base64Encode(key);
-    await _secureStorage.write(key: 'hive_aes_key', value: aesKeyBase64);
+    await secureStorage.write(key: 'hive_aes_key', value: aesKeyBase64);
   }
   final encryptionKey = HiveAesCipher(base64Decode(aesKeyBase64));
 
