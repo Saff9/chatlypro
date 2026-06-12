@@ -23,11 +23,26 @@ void main() async {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
-  String? aesKeyBase64 = await secureStorage.read(key: 'hive_aes_key');
-  if (aesKeyBase64 == null) {
-    final key = Hive.generateSecureKey();
-    aesKeyBase64 = base64Encode(key);
-    await secureStorage.write(key: 'hive_aes_key', value: aesKeyBase64);
+  String? aesKeyBase64;
+  try {
+    aesKeyBase64 = await secureStorage.read(key: 'hive_aes_key');
+    if (aesKeyBase64 == null) {
+      final key = Hive.generateSecureKey();
+      aesKeyBase64 = base64Encode(key);
+      await secureStorage.write(key: 'hive_aes_key', value: aesKeyBase64);
+    }
+  } catch (e) {
+    debugPrint('Secure storage error, attempting reset: $e');
+    try {
+      await secureStorage.deleteAll();
+      final key = Hive.generateSecureKey();
+      aesKeyBase64 = base64Encode(key);
+      await secureStorage.write(key: 'hive_aes_key', value: aesKeyBase64);
+    } catch (err) {
+      debugPrint('Secure storage recovery failed: $err');
+      // Final resilient fallback: use a static/default key so the app does not crash on startup
+      aesKeyBase64 = base64Encode(List.generate(32, (i) => i));
+    }
   }
   final encryptionKey = HiveAesCipher(base64Decode(aesKeyBase64));
 

@@ -64,6 +64,7 @@ class PushNotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  bool _firebaseInitialized = false;
 
   /// Initialize Firebase Core and Messaging setup
   Future<void> initialize() async {
@@ -71,29 +72,32 @@ class PushNotificationService {
 
     try {
       await Firebase.initializeApp();
+      _firebaseInitialized = true;
     } catch (e) {
       if (kDebugMode) {
         print('Firebase init skipped or service file missing: $e');
       }
     }
 
-    // Set background message handler
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    if (_firebaseInitialized) {
+      // Set background message handler
+      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+      // Set up foreground message handling
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        if (kDebugMode) {
+          print('Received foreground push sync trigger: ${message.data}');
+        }
+        // Since app is foreground, we are already connected via WebSocket or should check connection
+        final auth = AuthService();
+        if (auth.isAuthenticated) {
+          WebSocketService().connect(url: AppConfig.wsBaseUrl, token: auth.token!);
+        }
+      });
+    }
 
     // Initialize local notifications channel
     await _initializeLocalNotifications();
-
-    // Set up foreground message handling
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      if (kDebugMode) {
-        print('Received foreground push sync trigger: ${message.data}');
-      }
-      // Since app is foreground, we are already connected via WebSocket or should check connection
-      final auth = AuthService();
-      if (auth.isAuthenticated) {
-        WebSocketService().connect(url: AppConfig.wsBaseUrl, token: auth.token!);
-      }
-    });
 
     // Register a global listener on the websocket message stream to decrypt and notify
     WebSocketService().messageStream.listen(_handleIncomingWebSocketMessage);
@@ -103,6 +107,12 @@ class PushNotificationService {
 
   /// Setup notifications: request permissions, get token, and upload to server
   Future<void> setupPushNotifications() async {
+    if (!_firebaseInitialized) {
+      if (kDebugMode) {
+        print('FCM setup skipped (Firebase not initialized)');
+      }
+      return;
+    }
     try {
       final messaging = FirebaseMessaging.instance;
       
