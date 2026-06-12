@@ -45,8 +45,8 @@ void main() {
       );
 
       // 5. Test Alice sending messages to Bob (Multiple messages in one direction)
-      final plain1 = 'Hello Bob, this is a secure whistleblower message!';
-      final plain2 = 'Second message in chain, testing symmetric ratchet.';
+      const plain1 = 'Hello Bob, this is a secure whistleblower message!';
+      const plain2 = 'Second message in chain, testing symmetric ratchet.';
 
       final cipher1 = await crypto.encrypt(session: aliceSession, plaintext: plain1);
       final cipher2 = await crypto.encrypt(session: aliceSession, plaintext: plain2);
@@ -59,7 +59,7 @@ void main() {
       expect(decrypted2, equals(plain2));
 
       // 6. Test Bob responding to Alice (Triggers DH ratchet rotation)
-      final response1 = 'Got it Alice. Rotating our keys now.';
+      const response1 = 'Got it Alice. Rotating our keys now.';
       final cipherResp1 = await crypto.encrypt(session: bobSession, plaintext: response1);
 
       // Decrypt on Alice's end
@@ -68,8 +68,8 @@ void main() {
 
       // 7. Test skipped / out-of-order decryption
       // Alice sends message 3 and 4. Bob receives 4 first, then 3.
-      final plain3 = 'Message 3 (will arrive late)';
-      final plain4 = 'Message 4 (arrives immediately)';
+      const plain3 = 'Message 3 (will arrive late)';
+      const plain4 = 'Message 4 (arrives immediately)';
 
       final cipher3 = await crypto.encrypt(session: aliceSession, plaintext: plain3);
       final cipher4 = await crypto.encrypt(session: aliceSession, plaintext: plain4);

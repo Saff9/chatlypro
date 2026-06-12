@@ -10,6 +10,7 @@ import 'package:dio/dio.dart';
 import 'encryption_service.dart';
 import 'websocket_service.dart';
 import 'message_storage_service.dart';
+import 'api_service.dart';
 import '../features/chat/data/models/message_model.dart';
 import 'auth_service.dart';
 import '../core/config/app_config.dart';
@@ -243,7 +244,6 @@ class PushNotificationService {
             debugPrint('Background handshake initialization failed: $e');
           }
         }
-      }
 
         // Save decrypted message to database (unless it's already saved by chat screen)
         final storage = MessageStorageService();
