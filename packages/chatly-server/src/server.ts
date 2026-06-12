@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { initializeDatabase } from './db';
 import { authRoutes } from './routes/auth';
 import { pulseRoutes, userRoutes, groupRoutes } from './routes/social';
+import { keysRoutes } from './routes/keys';
 import { handleWebSocketConnection } from './sockets/chat';
 
 // Load environment variables from .env file in development.
@@ -73,6 +74,7 @@ server.register(fastifyWebsocket);
 
 // ─── REST Routes ──────────────────────────────────────────────────────────────
 server.register(authRoutes, { prefix: '/api/auth' });
+server.register(keysRoutes, { prefix: '/api/keys' });
 server.register(pulseRoutes, { prefix: '/api/pulse' });
 server.register(userRoutes,  { prefix: '/api/users' });
 server.register(groupRoutes, { prefix: '/api/groups' });

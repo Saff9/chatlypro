@@ -1,11 +1,22 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// ─── Keystore Configuration ──────────────────────────────────────────────────
+// In CI (GitHub Actions): credentials come from environment variables.
+// In local dev: credentials come from android/keystore.properties (gitignored).
+// If neither is present, the debug key is used as a fallback for local dev only.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val useReleaseKey = System.getenv("KEYSTORE_BASE64") != null ||
+        (keystorePropertiesFile.exists() && keystorePropertiesFile.canRead())
+
 android {
-    namespace = "com.example.chatly"
+    namespace = "com.chatly.app"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -16,21 +27,65 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.chatly"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = 34
+        applicationId = "com.chatly.app"
+        // Android 5.0+ covers 99.7% of active devices in 2024
+        minSdk = 21
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    // ─── Release Signing ─────────────────────────────────────────────────────
+    signingConfigs {
+        if (useReleaseKey) {
+            create("release") {
+                if (System.getenv("KEYSTORE_BASE64") != null) {
+                    // CI: keystore written to file by workflow, path in env
+                    storeFile = file(System.getenv("KEYSTORE_PATH") ?: "keystore.jks")
+                    storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+                    keyAlias = System.getenv("KEY_ALIAS") ?: ""
+                    keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+                } else {
+                    // Local dev: read from keystore.properties file
+                    val keystoreProperties = Properties()
+                    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+                    storeFile = file(keystoreProperties["storeFile"] as String)
+                    storePassword = keystoreProperties["storePassword"] as String
+                    keyAlias = keystoreProperties["keyAlias"] as String
+                    keyPassword = keystoreProperties["keyPassword"] as String
+                }
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (useReleaseKey) {
+                signingConfigs.getByName("release")
+            } else {
+                // Local dev without keystore: use debug for local testing only
+                signingConfigs.getByName("debug")
+            }
+            // Enable R8 minification for smaller APK
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        debug {
+            isDebuggable = true
+        }
+    }
+
+    // ─── APK splits for smaller download size ────────────────────────────────
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true  // Also produce a fat APK for sideloading
         }
     }
 }

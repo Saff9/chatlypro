@@ -15,6 +15,7 @@ import '../../../../core/widgets/secure_keyboard.dart';
 import '../../../../providers/wallpaper_provider.dart';
 import '../../../../services/p2p_mesh_service.dart';
 import '../../../../core/widgets/beautiful_avatar.dart';
+import '../../../../services/api_service.dart';
 
 // ─── Reaction catalogue ─────────────────────────────────────────────────────
 final _kReactions = [
@@ -60,52 +61,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   SecretKey? _sharedSessionKey;
   bool _isServiceReady = false;
 
-  // New Feature States
+  // UI state
   int? _activeTimeLockDelayMs;
-  final Map<String, bool> _isPlayingMap = {};
-  final Map<String, bool> _isTranscriptExpandedMap = {};
-  bool _isRecordingVoice = false;
-  int _recordingDuration = 0;
-  Timer? _recordingTimer;
-  final List<double> _waveHeights = [10, 24, 12, 35, 18, 30, 15, 28, 8, 22, 14, 38, 20];
-
-  final List<String> _toxicKeywords = [
-    'hate', 'kill', 'die', 'stupid', 'idiot', 'jerk', 'trash', 
-    'garbage', 'fool', 'loser', 'hate you', 'shut up', 'ugly', 'scam'
-  ];
-
-  String _normalizeLeetspeak(String text) {
-    final mapping = {
-      '@': 'a', '4': 'a', '▲': 'a',
-      '8': 'b', 'ß': 'b',
-      '©': 'c', '¢': 'c', '<': 'c', '(': 'c',
-      '3': 'e', '€': 'e',
-      '#': 'h',
-      '1': 'i', '!': 'i', '|': 'i', '¡': 'i',
-      '0': 'o',
-      '5': 's', '\$': 's', '§': 's',
-      '7': 't', '+': 't',
-      '\\/\\/': 'w',
-      '\\/': 'v',
-      '2': 'z'
-    };
-    String normalized = text.toLowerCase();
-    final sortedKeys = mapping.keys.toList()..sort((a, b) => b.length.compareTo(a.length));
-    for (final key in sortedKeys) {
-      normalized = normalized.replaceAll(key, mapping[key]!);
-    }
-    return normalized;
-  }
-
-  bool _isMessageToxic(String text) {
-    final normalizedText = _normalizeLeetspeak(text);
-    for (final term in _toxicKeywords) {
-      if (normalizedText.contains(term)) {
-        return true;
-      }
-    }
-    return false;
-  }
 
   @override
   void initState() {
@@ -129,95 +86,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   //  DATA LAYER
   // ──────────────────────────────────────────────────────────────────────────
 
-  List<MessageData> _getDecoyHistory(String username) {
-    if (username == 'sarah_c') {
-      return [
-        MessageData(
-          id: 'decoy_1',
-          text: "Hey! Can you pick up some groceries?",
-          isMe: false,
-          time: '5 min ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(minutes: 5)).millisecondsSinceEpoch,
-        ),
-        MessageData(
-          id: 'decoy_2',
-          text: "Sure, what do you need?",
-          isMe: true,
-          time: '3 min ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(minutes: 3)).millisecondsSinceEpoch,
-        ),
-        MessageData(
-          id: 'decoy_3',
-          text: "Milk, eggs, and bread. Thanks!",
-          isMe: false,
-          time: '2 min ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(minutes: 2)).millisecondsSinceEpoch,
-        ),
-      ];
-    } else if (username == 'dad') {
-      return [
-        MessageData(
-          id: 'decoy_dad_1',
-          text: "Are we still on for Sunday dinner?",
-          isMe: false,
-          time: '2 hrs ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(hours: 2)).millisecondsSinceEpoch,
-        ),
-        MessageData(
-          id: 'decoy_dad_2',
-          text: "Yes! I will be there by 6.",
-          isMe: true,
-          time: '1 hr ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(hours: 1)).millisecondsSinceEpoch,
-        ),
-        MessageData(
-          id: 'decoy_dad_3',
-          text: "Perfect, looking forward to it.",
-          isMe: false,
-          time: '45 min ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(minutes: 45)).millisecondsSinceEpoch,
-        ),
-      ];
-    } else {
-      // Tech Support
-      return [
-        MessageData(
-          id: 'decoy_tech_1',
-          text: "Your internet ticket has been resolved. Please verify connection.",
-          isMe: false,
-          time: '1 day ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(days: 1)).millisecondsSinceEpoch,
-        ),
-        MessageData(
-          id: 'decoy_tech_2',
-          text: "Great, it is working now. Thank you!",
-          isMe: true,
-          time: '18 hrs ago',
-          isRead: true,
-          timestamp: DateTime.now().subtract(const Duration(hours: 18)).millisecondsSinceEpoch,
-        ),
-      ];
-    }
-  }
-
   Future<void> _loadMessageHistory() async {
+    // In duress mode, simply show an empty conversation
     final settingsBox = Hive.box('settings');
     final bool isDuress = settingsBox.get('is_duress_active', defaultValue: false) as bool;
     if (isDuress) {
-      final List<MessageData> decoyHistory = _getDecoyHistory(widget.chatData.username);
-      if (mounted) {
-        setState(() {
-          _messages.clear();
-          _messages.addAll(decoyHistory);
-        });
-      }
+      if (mounted) setState(() => _messages.clear());
       return;
     }
 
@@ -238,18 +112,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     if (myPrivBase64 != null && myPubBase64 != null) {
       final crypto = EncryptionService();
       final myKeyPair = await crypto.importKeyPair(myPubBase64, myPrivBase64);
-      final recipientPublicKeyBase64 =
-          secureBox.get('recipient_pub_${widget.chatData.username}') ??
-              await crypto.exportPublicKey(await crypto.generateKeyPair());
-      await secureBox.put('recipient_pub_${widget.chatData.username}', recipientPublicKeyBase64);
-      _sharedSessionKey = await crypto.deriveSharedSecret(
-        myKeyPair: myKeyPair,
-        recipientPublicBase64: recipientPublicKeyBase64,
-      );
-      setState(() => _isServiceReady = true);
+
+      // Try cached key first
+      String? recipientPublicKeyBase64 =
+          secureBox.get('recipient_pub_${widget.chatData.username}') as String?;
+
+      // If not cached, fetch from server (real key exchange)
+      if (recipientPublicKeyBase64 == null || recipientPublicKeyBase64.isEmpty) {
+        recipientPublicKeyBase64 =
+            await ApiService().fetchPublicKey(widget.chatData.username);
+        if (recipientPublicKeyBase64 != null) {
+          // Cache the fetched key locally
+          await secureBox.put(
+              'recipient_pub_${widget.chatData.username}', recipientPublicKeyBase64);
+        }
+      }
+
+      if (recipientPublicKeyBase64 != null) {
+        _sharedSessionKey = await crypto.deriveSharedSecret(
+          myKeyPair: myKeyPair,
+          recipientPublicBase64: recipientPublicKeyBase64,
+        );
+        if (mounted) setState(() => _isServiceReady = true);
+      } else {
+        // Recipient has not uploaded their key yet — show waiting state
+        // Do NOT generate a fake key — that breaks decryption completely
+        if (mounted) setState(() => _isServiceReady = false);
+      }
     }
 
-    _socketSubscription = WebSocketService().messageStream.listen(_handleIncomingSocketPayload);
+    _socketSubscription =
+        WebSocketService().messageStream.listen(_handleIncomingSocketPayload);
     _stateSubscription = WebSocketService().stateStream.listen((state) {
       if (mounted) setState(() {});
     });

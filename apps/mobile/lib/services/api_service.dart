@@ -225,4 +225,39 @@ class ApiService {
       return false;
     }
   }
+
+  // ─── E2E Key Exchange ───────────────────────────────────────────────────────────────────
+
+  /// Upload the local user's X25519 public identity key to the server.
+  /// Must be called after every login and registration so recipients
+  /// can fetch it to establish a real encrypted session.
+  Future<bool> uploadPublicKey(String base64PublicKey) async {
+    try {
+      final opts = await _auth();
+      await _dio.post(
+        '/keys/upload',
+        data: {'identity_key': base64PublicKey},
+        options: opts,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('uploadPublicKey error: $e');
+      return false;
+    }
+  }
+
+  /// Fetch the X25519 public identity key for a given username.
+  /// Returns null if the user has not uploaded a key yet.
+  Future<String?> fetchPublicKey(String username) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.get('/keys/$username', options: opts);
+      final found = res.data['found'] as bool? ?? false;
+      if (!found) return null;
+      return res.data['identity_key'] as String?;
+    } catch (e) {
+      debugPrint('fetchPublicKey error: $e');
+      return null;
+    }
+  }
 }

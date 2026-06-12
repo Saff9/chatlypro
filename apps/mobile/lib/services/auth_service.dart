@@ -4,6 +4,7 @@ import 'package:hive/hive.dart';
 import 'encryption_service.dart';
 import 'websocket_service.dart';
 import 'push_notification_service.dart';
+import 'api_service.dart';
 import '../core/config/app_config.dart';
 
 class AuthResult {
@@ -65,6 +66,8 @@ class AuthService {
       );
       // Register push notifications
       PushNotificationService().setupPushNotifications();
+      // Upload public key to server so chat partners can start E2EE sessions
+      _uploadPublicKeyIfNeeded();
       return true;
     }
     return false;
@@ -121,6 +124,8 @@ class AuthService {
         WebSocketService().connect(url: AppConfig.wsBaseUrl, token: _token!);
         // Register push notifications
         PushNotificationService().setupPushNotifications();
+        // Upload public key so chat partners can find us
+        _uploadPublicKeyIfNeeded();
 
         return AuthResult(success: true, emailVerified: true);
       }
@@ -174,6 +179,7 @@ class AuthService {
 
         WebSocketService().connect(url: AppConfig.wsBaseUrl, token: _token!);
         PushNotificationService().setupPushNotifications();
+        _uploadPublicKeyIfNeeded();
         return AuthResult(success: true, emailVerified: true);
       }
     } on DioException catch (e) {
@@ -313,6 +319,20 @@ class AuthService {
       debugPrint('isUsernameAvailable error: $e');
     }
     return false;
+  }
+
+  /// Upload public key to server if one exists locally.
+  /// Fire-and-forget: failures are logged but do not block the auth flow.
+  void _uploadPublicKeyIfNeeded() async {
+    try {
+      final secureBox = await Hive.openBox('secure_vault');
+      final pubKey = secureBox.get('public_key') as String?;
+      if (pubKey != null && pubKey.isNotEmpty) {
+        await ApiService().uploadPublicKey(pubKey);
+      }
+    } catch (e) {
+      debugPrint('_uploadPublicKeyIfNeeded: $e');
+    }
   }
 
   /// Disconnects socket and wipes stored session tokens

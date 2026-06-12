@@ -479,30 +479,7 @@ class SettingsScreen extends ConsumerWidget {
             borderOpacity: 0.08,
             child: Column(
               children: [
-                ListTile(
-                  leading: const Icon(Icons.fingerprint_rounded, color: Color(0xFF8083FF)),
-                  title: Text('Biometric Lock', style: TextStyle(color: textColor)),
-                  subtitle: Text('Require fingerprint / Face ID on open', style: TextStyle(color: subColor.withValues(alpha: 0.5))),
-                  trailing: Switch(
-                    value: false,
-                    activeThumbColor: theme.primaryColor,
-                    onChanged: (_) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Row(
-                            children: [
-                              Icon(Icons.fingerprint_rounded, color: Colors.white, size: 16),
-                              SizedBox(width: 10),
-                              Expanded(child: Text('Biometric auth coming in v2.0 — API keys pending.')),
-                            ],
-                          ),
-                          duration: Duration(seconds: 3),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                Divider(height: 1, indent: 60, color: Colors.white.withValues(alpha: 0.05)),
+
                 ListTile(
                   leading: Icon(Icons.person_add_alt_1_rounded, color: iconColor),
                   title: Text('Connection Invitations', style: TextStyle(color: textColor)),
@@ -548,14 +525,7 @@ class SettingsScreen extends ConsumerWidget {
                   title: Text('Version Info', style: TextStyle(color: textColor)),
                   subtitle: Text('Chatly v1.0.0', style: TextStyle(color: subColor.withValues(alpha: 0.5))),
                 ),
-                Divider(height: 1, indent: 60, color: Colors.white.withValues(alpha: 0.05)),
-                ListTile(
-                  leading: Icon(Icons.rate_review_outlined, color: iconColor),
-                  title: Text('Community Roadmap & Voting', style: TextStyle(color: textColor)),
-                  subtitle: Text('Upvote features for upcoming releases', style: TextStyle(color: subColor.withValues(alpha: 0.5))),
-                  trailing: Icon(Icons.arrow_forward_ios_rounded, size: 14, color: iconColor),
-                  onTap: () => _showCommunityRoadmapDialog(context),
-                ),
+
               ],
             ),
           ),
@@ -1249,21 +1219,7 @@ class SettingsScreen extends ConsumerWidget {
                 icon: Icons.rocket_launch_rounded,
                 color: const Color(0xFF6366F1),
               ),
-              const SizedBox(height: 10),
-              ListTile(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: const BorderSide(color: Colors.white10),
-                ),
-                tileColor: Colors.white.withValues(alpha: 0.01),
-                leading: const Icon(Icons.currency_bitcoin_rounded, color: Color(0xFFF59E0B)),
-                title: const Text('Anonymous Crypto', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
-                subtitle: const Text('Monero (XMR) & Bitcoin', style: TextStyle(fontSize: 10, color: Colors.white54)),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showCryptoDonationDialog(context, ref);
-                },
-              ),
+
             ],
           ),
           actions: [
@@ -1321,24 +1277,57 @@ class SettingsScreen extends ConsumerWidget {
         ),
         onTap: () async {
           final uri = Uri.parse(url);
+          // Open payment link FIRST
           if (await canLaunchUrl(uri)) {
             await launchUrl(uri, mode: LaunchMode.externalApplication);
           }
-          await ref.read(sponsorshipProvider.notifier).setSponsorStatus(true);
+          // Then ask user to confirm payment was completed
           if (context.mounted) {
-            Navigator.of(context).pop();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    const Icon(Icons.favorite_rounded, color: Colors.white, size: 16),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text('Thank you! Redirecting to secure checkout for $title...')),
-                  ],
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                backgroundColor: const Color(0xFF13131B),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: const BorderSide(color: Colors.white10),
                 ),
-                backgroundColor: const Color(0xFF10B981),
+                title: const Text('Payment Complete?',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                content: const Text(
+                  'Did your payment go through successfully?',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('Not yet', style: TextStyle(color: Colors.white54)),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('Yes, paid!',
+                        style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
+                  ),
+                ],
               ),
             );
+            if (confirmed == true) {
+              await ref.read(sponsorshipProvider.notifier).setSponsorStatus(true);
+              if (context.mounted) {
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Row(
+                      children: [
+                        Icon(Icons.favorite_rounded, color: Colors.white, size: 16),
+                        SizedBox(width: 10),
+                        Expanded(child: Text('Thank you for supporting Chatly! ❤️')),
+                      ],
+                    ),
+                    backgroundColor: Color(0xFF10B981),
+                  ),
+                );
+              }
+            }
           }
         },
       ),
@@ -2896,144 +2885,4 @@ class SettingsScreen extends ConsumerWidget {
     );
   }
 
-  void _showCommunityRoadmapDialog(BuildContext context) {
-    final settingsBox = Hive.box('settings');
-    final List<Map<String, String>> roadmapFeatures = [
-      {
-        'id': 'unified_push',
-        'title': 'UnifiedPush Integration',
-        'desc': 'De-Google notifications using open source self-hosted push servers.',
-      },
-      {
-        'id': 'onion_routing',
-        'title': 'Tor Onion Routing',
-        'desc': 'Obfuscate your server IP address by routing E2E traffic through Tor.',
-      },
-      {
-        'id': 'stegano_images',
-        'title': 'Steganographic Camouflage',
-        'desc': 'Hide encrypted files inside harmless-looking photos before sending.',
-      },
-      {
-        'id': 'self_host',
-        'title': 'Personal Node Syncing',
-        'desc': 'Directly back up and synchronize databases to your own physical server.',
-      },
-      {
-        'id': 'web3_identity',
-        'title': 'P2P Wallet Identity',
-        'desc': 'Sign cryptographic handshakes using hardware wallets for zero-trust trust-chains.',
-      },
-    ];
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF13131B),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-                side: const BorderSide(color: Colors.white10),
-              ),
-              title: const Row(
-                children: [
-                  Icon(Icons.rate_review_outlined, color: Color(0xFF8083FF)),
-                  SizedBox(width: 10),
-                  Text('Community Roadmap', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                ],
-              ),
-              content: SizedBox(
-                width: double.maxFinite,
-                height: 385,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Vote on features you want to see implemented in upcoming releases. Votes are stored locally on your device.',
-                      style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.4),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: roadmapFeatures.length,
-                        itemBuilder: (context, index) {
-                          final f = roadmapFeatures[index];
-                          final id = f['id']!;
-                          final title = f['title']!;
-                          final desc = f['desc']!;
-                          final voted = settingsBox.get('vote_$id', defaultValue: false) as bool;
-                          final baseVotes = 100 + (id.hashCode % 150);
-                          final votesCount = baseVotes + (voted ? 1 : 0);
-
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: voted ? const Color(0xFF8083FF).withValues(alpha: 0.08) : Colors.white.withValues(alpha: 0.02),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: voted ? const Color(0xFF8083FF).withValues(alpha: 0.3) : Colors.white.withValues(alpha: 0.05)),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                                      const SizedBox(height: 4),
-                                      Text(desc, style: const TextStyle(color: Colors.white54, fontSize: 10, height: 1.3)),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                InkWell(
-                                  onTap: () async {
-                                    await settingsBox.put('vote_$id', !voted);
-                                    setState(() {});
-                                  },
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                    decoration: BoxDecoration(
-                                      color: voted ? const Color(0xFF8083FF) : Colors.white10,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Column(
-                                      children: [
-                                        Icon(Icons.keyboard_arrow_up_rounded, color: voted ? Colors.white : Colors.white70, size: 16),
-                                        Text(
-                                          '$votesCount',
-                                          style: TextStyle(
-                                            color: voted ? Colors.white : Colors.white70,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close', style: TextStyle(color: Colors.white60)),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
 }

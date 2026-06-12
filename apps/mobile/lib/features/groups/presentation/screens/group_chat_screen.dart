@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cryptography/cryptography.dart';
+import 'package:hive/hive.dart';
 import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../providers/connection_provider.dart';
 import '../../../../services/api_service.dart';
@@ -37,10 +40,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   Timer? _countdownTimer;
   StreamSubscription? _socketSubscription;
 
-  final List<String> _toxicKeywords = [
-    'hate', 'kill', 'die', 'stupid', 'idiot', 'jerk', 'trash', 
-    'garbage', 'fool', 'loser', 'hate you', 'shut up', 'ugly', 'scam'
-  ];
 
   @override
   void initState() {
@@ -101,13 +100,23 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   }
 
   Future<SecretKey> _getGroupKey() async {
-    final bytes = List<int>.generate(32, (i) {
-      if (i < widget.groupId.length) {
-        return widget.groupId.codeUnitAt(i) ^ 0x5A;
-      }
-      return 0xA5 ^ i;
-    });
-    return SecretKey(bytes);
+    // Use a per-group random key stored in the secure vault.
+    // This is still not true E2EE (server can read as it relays plaintext during transit)
+    // but at minimum the key is random and not derived from the public group ID.
+    final secureBox = await Hive.openBox('secure_vault');
+    final cacheKey = 'group_key_${widget.groupId}';
+    String? storedKeyBase64 = secureBox.get(cacheKey) as String?;
+
+    if (storedKeyBase64 == null) {
+      // Generate a random 32-byte key for this group
+      final random = Random.secure();
+      final keyBytes = List<int>.generate(32, (_) => random.nextInt(256));
+      storedKeyBase64 = base64Encode(keyBytes);
+      await secureBox.put(cacheKey, storedKeyBase64);
+    }
+
+    final keyBytes = base64Decode(storedKeyBase64);
+    return SecretKey(keyBytes);
   }
 
   Future<String> _decrypt(String ciphertext, SecretKey key) async {
@@ -200,94 +209,11 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     super.dispose();
   }
 
-  double _calculateGroupToxicity() {
-    if (_messages.isEmpty) return 0.0;
-
-    final recentMessages = _messages.length > 15 
-        ? _messages.sublist(_messages.length - 15) 
-        : _messages;
-
-    int toxicCount = 0;
-    for (final msg in recentMessages) {
-      if (_isMessageToxic(msg.text)) {
-        toxicCount++;
-      }
-    }
-
-    return toxicCount / recentMessages.length;
-  }
-
-  String _normalizeLeetspeak(String text) {
-    final mapping = {
-      '@': 'a', '4': 'a', '▲': 'a',
-      '8': 'b', 'ß': 'b',
-      '©': 'c', '¢': 'c', '<': 'c', '(': 'c',
-      '3': 'e', '€': 'e',
-      '#': 'h',
-      '1': 'i', '!': 'i', '|': 'i', '¡': 'i',
-      '0': 'o',
-      '5': 's', '\$': 's', '§': 's',
-      '7': 't', '+': 't',
-      '\\/\\/': 'w',
-      '\\/': 'v',
-      '2': 'z'
-    };
-    String normalized = text.toLowerCase();
-    final sortedKeys = mapping.keys.toList()..sort((a, b) => b.length.compareTo(a.length));
-    for (final key in sortedKeys) {
-      normalized = normalized.replaceAll(key, mapping[key]!);
-    }
-    return normalized;
-  }
-
-  bool _isMessageToxic(String text) {
-    final normalizedText = _normalizeLeetspeak(text);
-    for (final term in _toxicKeywords) {
-      if (normalizedText.contains(term)) {
-        return true;
-      }
-    }
-    return false;
-  }
 
   void _handleSendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    if (_isMessageToxic(text)) {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF13131B),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: const BorderSide(color: Colors.white10),
-          ),
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.orange),
-              SizedBox(width: 10),
-              Text('Toxic Content Warning', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: const Text(
-            'Your message contains potentially offensive language. Do you still want to send it?',
-            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Send Anyway', style: TextStyle(color: Colors.orange)),
-            ),
-          ],
-        ),
-      );
-      if (confirm != true) return;
-    }
 
     final myUsername = AuthService().username ?? 'Me';
     final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -342,26 +268,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     
-    final toxicity = _calculateGroupToxicity();
-    
-    Color vibeColor;
-    String vibeLabel;
-    IconData vibeIcon;
-
-    if (toxicity <= 0.15) {
-      vibeColor = const Color(0xFF10B981);
-      vibeLabel = 'Chill Vibe • Friendly & Respectful';
-      vibeIcon = Icons.sentiment_satisfied_alt_rounded;
-    } else if (toxicity <= 0.40) {
-      vibeColor = const Color(0xFFF59E0B);
-      vibeLabel = 'Spicy Vibe • Heated Discussions';
-      vibeIcon = Icons.sentiment_neutral_rounded;
-    } else {
-      vibeColor = const Color(0xFFEF4444);
-      vibeLabel = 'Toxic Vibe Alert • Spammers/Insults';
-      vibeIcon = Icons.sentiment_very_dissatisfied_rounded;
-    }
-
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0B132B) : const Color(0xFFF1F5F9),
       appBar: AppBar(
@@ -422,51 +328,6 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-              decoration: BoxDecoration(
-                color: vibeColor.withValues(alpha: 0.08),
-                border: Border(
-                  bottom: BorderSide(color: vibeColor.withValues(alpha: 0.15), width: 1),
-                ),
-              ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 12,
-                    backgroundColor: vibeColor.withValues(alpha: 0.2),
-                    child: Icon(vibeIcon, size: 14, color: vibeColor),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      vibeLabel,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: vibeColor,
-                      ),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: vibeColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      'Score: ${(toxicity * 100).toInt()}%',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: vibeColor,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
 
             Expanded(
               child: ListView.builder(

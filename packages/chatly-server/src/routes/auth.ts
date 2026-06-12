@@ -160,11 +160,17 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
         [emailHash, otp, otpExpiry]
       );
 
-      await sendEmail({
+      const emailSent = await sendEmail({
         to: cleanEmail,
         subject: 'Verify your Chatly account',
-        text: `Welcome to Chatly!\n\nYour verification code is: ${otp}\n\nIt expires in 15 minutes.`,
+        text: `Welcome to Chatly!\n\nYour verification code is: ${otp}\n\nIt expires in 15 minutes. Do not share this code with anyone.`,
       });
+
+      if (!emailSent && process.env.NODE_ENV === 'production') {
+        // Rollback: delete the just-created user so they can retry
+        await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+        return reply.code(503).send({ error: 'Email service is unavailable. Please try again later.' });
+      }
 
       const token = signToken({ userId, username: cleanUsername, emailVerified: false });
       return reply.code(201).send({ token, userId, username: cleanUsername, emailVerified: false });

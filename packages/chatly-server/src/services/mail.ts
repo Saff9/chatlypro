@@ -20,15 +20,9 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
       auth: { user, pass }
     });
   } else if (isProduction) {
-    console.error('[FATAL] Missing custom SMTP configurations in production environment. Dynamic Ethereal mail is disabled for security.');
-    // In production with missing SMTP, use a silent secure mock transporter to prevent OTP leaks
-    transporter = {
-      sendMail: async (mailOptions: any) => {
-        console.warn(`[SECURITY WARNING] Attempted to send email to ${mailOptions.to.replace(/(?<=.{2}).(?=[^@]*?@)/g, '*')} but SMTP is unconfigured in production.`);
-        console.log(`[DEVELOPER MOCK LOG] Verification email content for ${mailOptions.to}:\nSubject: ${mailOptions.subject}\nBody: ${mailOptions.text}\n`);
-        return { messageId: 'unconfigured-smtp-production-id' };
-      }
-    } as any;
+    console.error('[FATAL] SMTP is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS env vars.');
+    // Fail-closed: throw so registration/login returns 503 instead of silently proceeding
+    throw new Error('SMTP_NOT_CONFIGURED');
   } else {
     console.log('No SMTP configurations found. Initializing a free dynamic Ethereal test account...');
     try {
@@ -63,38 +57,36 @@ async function getTransporter(): Promise<nodemailer.Transporter> {
 }
 
 export async function sendEmail({ to, subject, text, html }: { to: string; subject: string; text: string; html?: string }) {
+  const isProduction = (process.env.NODE_ENV || 'development') === 'production';
+
   try {
     const transport = await getTransporter();
-    const isProduction = (process.env.NODE_ENV || 'development') === 'production';
-    
-    // Print verification/security codes to console immediately for convenience during development/testing
-    if (!isProduction) {
-      console.log('\n--- [OUTGOING SECURITY EMAIL] ---');
+
+    // In production: mask email in logs, NEVER log message body (contains OTPs)
+    if (isProduction) {
+      const maskedEmail = to.replace(/(?<=.{2}).(?=[^@]*?@)/g, '*');
+      console.log(`[AUDIT] Dispatching security email to: ${maskedEmail}`);
+    } else {
+      // Development only: print OTP to console so devs can test without real SMTP
+      console.log('\n--- [DEV OUTGOING EMAIL] ---');
       console.log(`To: ${to}`);
       console.log(`Subject: ${subject}`);
       console.log(`Body: ${text}`);
-      console.log('---------------------------------\n');
-    } else {
-      // Mask email for production logs to protect user PII
-      const maskedEmail = to.replace(/(?<=.{2}).(?=[^@]*?@)/g, '*');
-      console.log(`[AUDIT] Dispatching security email to: ${maskedEmail}`);
+      console.log('----------------------------\n');
     }
 
-    // Run the actual sendMail and await its completion to avoid silently failing background tasks
     const info = await transport.sendMail({
-      from: '"Chatly Security" <security@chatly.secure>',
+      from: '"Chatly" <security@chatly.app>',
       to,
       subject,
       text,
-      html
+      html,
     });
 
-    console.log(`Email dispatched successfully to ${to}. Message ID: ${info.messageId}`);
-    
     if (!isProduction) {
       const previewUrl = nodemailer.getTestMessageUrl(info);
       if (previewUrl) {
-        console.log(`\n📬 [TESTING MODE] Read your verification code at Ethereal URL: ${previewUrl}\n`);
+        console.log(`📬 Preview at: ${previewUrl}\n`);
       }
     }
 
