@@ -267,4 +267,16 @@ class ApiService {
       return null;
     }
   }
+
+  /// Request a short-lived WebSocket authentication ticket.
+  Future<String?> getWsTicket() async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.post('/auth/ws-ticket', options: opts);
+      return res.data['ticket'] as String?;
+    } catch (e) {
+      debugPrint('getWsTicket error: $e');
+      return null;
+    }
+  }
 }

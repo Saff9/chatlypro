@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { pool } from '../db';
 import { sendEmail } from '../services/mail';
+import { redisClient } from '../db/redis';
 
 // ─── Secrets ──────────────────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-prod';
@@ -14,6 +15,10 @@ const RAW_EMAIL_KEY = process.env.EMAIL_ENCRYPTION_KEY || 'chatly-default-key-DO
 const EMAIL_ENCRYPTION_KEY = Buffer.from(RAW_EMAIL_KEY.padEnd(32, '0').slice(0, 32));
 
 const EMAIL_HASH_SALT = process.env.EMAIL_HASH_SALT || 'chatly-default-salt-key-do-not-use-in-prod';
+
+function isDevOtpBypassEnabled(): boolean {
+  return NODE_ENV !== 'production' && process.env.CHATLY_DEV_OTP_BYPASS === 'true';
+}
 
 // ─── Email Encryption (AES-256-GCM - Authenticated) ──────────────────────────
 function encryptEmail(email: string): string {
@@ -186,7 +191,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
     const emailHash = hashEmail(email);
 
     try {
-      const isBypass = process.env.NODE_ENV === 'development' && String(code) === '123456';
+      const isBypass = isDevOtpBypassEnabled() && String(code) === '123456';
 
       let verified = false;
       if (isBypass) {
@@ -357,7 +362,7 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
     }
 
     try {
-      const isBypass = process.env.NODE_ENV === 'development' && String(code) === '123456';
+      const isBypass = isDevOtpBypassEnabled() && String(code) === '123456';
 
       let verified = false;
       if (isBypass) {
@@ -451,5 +456,17 @@ export async function authRoutes(fastify: FastifyInstance, _options: FastifyPlug
       fastify.log.error(err, 'push-token: DB error');
       return reply.code(500).send({ error: 'Failed to update push token' });
     }
+  });
+
+  // POST /api/auth/ws-ticket (requires valid Bearer token)
+  // Generates a short-lived UUID ticket for authenticating WebSockets without URLs leaking JWTs.
+  fastify.post('/ws-ticket', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const ticket = crypto.randomUUID();
+    // Cache the user object in Redis for 30 seconds
+    await redisClient.set(`ws-ticket:${ticket}`, JSON.stringify(user), 'EX', 30);
+    return reply.send({ ticket });
   });
 }

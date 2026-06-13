@@ -54,6 +54,9 @@ class PushNotificationService {
   factory PushNotificationService() => _instance;
   PushNotificationService._internal();
 
+  // RAM-only cache for ephemeral messages received in background
+  final List<MessageData> backgroundVaultMessages = [];
+
   final _dio = Dio(BaseOptions(
     baseUrl: AppConfig.apiBaseUrl,
     connectTimeout: const Duration(seconds: 5),
@@ -255,24 +258,46 @@ class PushNotificationService {
           }
         }
 
-        // Save decrypted message to database (unless it's already saved by chat screen)
-        final storage = MessageStorageService();
-        final existing = await storage.getMessages(senderId);
-        final exists = existing.any((m) => m.text == decryptedText && m.isMe == false);
-        
-        if (!exists) {
-          final newMsg = MessageData(
-            id: DateTime.now().microsecondsSinceEpoch.toString(),
-            text: decryptedText,
-            isMe: false,
-            time: 'Now',
-            isRead: false,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-          );
-          await storage.saveMessage(senderId, newMsg);
+        String cleanText = decryptedText;
+        bool isVaultMsg = false;
+        int? expiryMs;
+
+        if (decryptedText.startsWith('[VAULT_MSG:')) {
+          final closingBracket = decryptedText.indexOf(']');
+          if (closingBracket != -1) {
+            isVaultMsg = true;
+            final meta = decryptedText.substring(11, closingBracket);
+            expiryMs = int.tryParse(meta);
+            cleanText = decryptedText.substring(closingBracket + 1);
+          }
+        }
+
+        final newMsg = MessageData(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          text: cleanText,
+          isMe: false,
+          time: 'Now',
+          isRead: false,
+          isVault: isVaultMsg,
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          expiresAt: (isVaultMsg && expiryMs != null)
+              ? DateTime.now().millisecondsSinceEpoch + expiryMs
+              : null,
+          sender: senderId,
+        );
+
+        if (isVaultMsg) {
+          backgroundVaultMessages.add(newMsg);
+          await _showLocalNotification(senderId, 'New Ephemeral Message');
+        } else {
+          final storage = MessageStorageService();
+          final existing = await storage.getMessages(senderId);
+          final exists = existing.any((m) => m.text == cleanText && m.isMe == false);
           
-          // Display the local notification securely
-          await _showLocalNotification(senderId, decryptedText);
+          if (!exists) {
+            await storage.saveMessage(senderId, newMsg);
+            await _showLocalNotification(senderId, cleanText);
+          }
         }
       }
     }

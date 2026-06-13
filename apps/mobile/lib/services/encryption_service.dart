@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:crypto/crypto.dart' as crypto_hash; // standard hashing for safety numbers
+import 'package:hive/hive.dart';
 
 /// Represents a persistent Double Ratchet session state for a contact
 class DoubleRatchetSession {
@@ -583,10 +584,58 @@ class EncryptionService {
         secretBox,
         secretKey: secretKey,
       );
-
+ 
       return utf8.decode(cleartextBytes);
     } catch (e) {
       throw Exception('Decryption failed: Integrity check or key mismatch.');
     }
   }
+}
+
+class IdentityTrustService {
+  static const _prefix = 'trusted_identity_sign_pub_';
+
+  Future<bool> isSafetyVerified(String username) async {
+    final box = await Hive.openBox('secure_vault');
+    return box.get('safety_verified_$username', defaultValue: false) as bool;
+  }
+
+  Future<void> setSafetyVerified(String username, bool verified) async {
+    final box = await Hive.openBox('secure_vault');
+    await box.put('safety_verified_$username', verified);
+  }
+
+  Future<IdentityTrustResult> checkAndPin({
+    required String username,
+    required String identitySignPublicKey,
+  }) async {
+    final box = await Hive.openBox('secure_vault');
+    final key = '$_prefix$username';
+    final existing = box.get(key) as String?;
+
+    if (existing == null || existing.isEmpty) {
+      await box.put(key, identitySignPublicKey);
+      return IdentityTrustResult.firstUse;
+    }
+
+    if (existing == identitySignPublicKey) {
+      return IdentityTrustResult.trusted;
+    }
+
+    return IdentityTrustResult.changed;
+  }
+
+  Future<void> acceptChangedIdentity({
+    required String username,
+    required String newIdentitySignPublicKey,
+  }) async {
+    final box = await Hive.openBox('secure_vault');
+    await box.put('$_prefix$username', newIdentitySignPublicKey);
+  }
+}
+
+enum IdentityTrustResult {
+  firstUse,
+  trusted,
+  changed,
 }

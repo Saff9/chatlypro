@@ -52,10 +52,11 @@ try {
 }
 
 // ─── SSL Configuration ────────────────────────────────────────────────────────
-// For remote connections: allow SSL but don't reject self-signed certs.
-// Supabase uses a self-signed CA by default. rejectUnauthorized:false is fine
-// because the connection is already encrypted and Supabase's network is trusted.
-const sslConfig = isLocal ? false : { rejectUnauthorized: false };
+const sslConfig = isLocal
+  ? false
+  : process.env.DATABASE_CA_CERT
+    ? { ca: process.env.DATABASE_CA_CERT, rejectUnauthorized: true }
+    : { rejectUnauthorized: true };
 
 // ─── Connection Pool ──────────────────────────────────────────────────────────
 let isConnected = false;

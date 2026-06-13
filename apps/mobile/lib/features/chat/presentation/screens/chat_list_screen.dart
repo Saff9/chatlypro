@@ -29,9 +29,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   // Real contacts loaded dynamically
   final List<ChatListItemData> _chats = [];
 
-  // Decoy contacts shown in duress mode
-  final List<ChatListItemData> _decoyChats = [];
-
   StreamSubscription? _socketSubscription;
 
   // Returns a deterministic color for the relationship health ring around the
@@ -143,34 +140,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
   void initState() {
     super.initState();
     P2PMeshService().startP2P();
-    
-    // Load decoy chats
-    _decoyChats.addAll([
-      ChatListItemData(
-        name: 'Sarah Connor',
-        username: 'sarah_c',
-        lastMessage: 'Milk, eggs, and bread. Thanks!',
-        time: '2 min ago',
-        unreadCount: 0,
-        isOnline: true,
-      ),
-      ChatListItemData(
-        name: 'Dad',
-        username: 'dad',
-        lastMessage: 'Perfect, looking forward to it.',
-        time: '45 min ago',
-        unreadCount: 0,
-        isOnline: false,
-      ),
-      ChatListItemData(
-        name: 'Tech Support',
-        username: 'tech_support',
-        lastMessage: 'Great, it is working now. Thank you!',
-        time: '18 hrs ago',
-        unreadCount: 0,
-        isOnline: false,
-      ),
-    ]);
 
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.toLowerCase().trim());
@@ -574,12 +543,9 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
               );
             },
           ),
-          
-          // Chat List View
           Expanded(
             child: Builder(builder: (context) {
-              final bool isDuressActive = densityBox.get('is_duress_active', defaultValue: false) as bool;
-              final sourceChats = isDuressActive ? _decoyChats : _chats;
+              final sourceChats = _chats;
 
               final filtered = _searchQuery.isEmpty
                   ? sourceChats

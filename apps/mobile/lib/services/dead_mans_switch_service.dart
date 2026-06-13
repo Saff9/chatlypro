@@ -74,12 +74,6 @@ class DeadMansSwitchService {
       }
     } catch (_) {}
 
-    // Add decoy chats just in case
-    for (final decoy in ['sarah_c', 'dad', 'tech_support']) {
-      if (!chatsToWipe.contains(decoy)) {
-        chatsToWipe.add(decoy);
-      }
-    }
 
     // Completely shred and delete physical box files from disk
     for (final username in chatsToWipe) {

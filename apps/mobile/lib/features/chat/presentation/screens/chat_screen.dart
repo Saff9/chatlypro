@@ -11,11 +11,11 @@ import '../../../../services/encryption_service.dart';
 import '../../../../services/websocket_service.dart';
 import '../../../../services/forensic_eraser_service.dart';
 import '../../../../services/message_storage_service.dart';
-import '../../../../core/widgets/secure_keyboard.dart';
 import '../../../../providers/wallpaper_provider.dart';
 import '../../../../services/p2p_mesh_service.dart';
 import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../services/api_service.dart';
+import '../../../../services/push_notification_service.dart';
 
 // ─── Reaction catalogue ─────────────────────────────────────────────────────
 final _kReactions = [
@@ -52,7 +52,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
   bool _isVaultMode = false;
   bool _isTyping = false;
-  bool _isSecureKeyboardActive = false;
   int? _vaultTimerMs; // null = no expiry
 
   StreamSubscription? _socketSubscription;
@@ -60,6 +59,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   Timer? _expiryTimer;
   DoubleRatchetSession? _session;
   bool _isServiceReady = false;
+
+  IdentityTrustResult? _identityTrust;
+  bool _isSafetyVerified = false;
 
   // UI state
   int? _activeTimeLockDelayMs;
@@ -102,17 +104,79 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     }
 
     final history = await MessageStorageService().getMessages(widget.chatData.username);
+    final pushService = PushNotificationService();
+    final matchingBgMsgs = pushService.backgroundVaultMessages
+        .where((m) => m.sender == widget.chatData.username)
+        .toList();
+    pushService.backgroundVaultMessages.removeWhere((m) => m.sender == widget.chatData.username);
+
     if (mounted) {
       setState(() {
         _messages.clear();
         _messages.addAll(history);
+        _messages.addAll(matchingBgMsgs);
+        _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       });
     }
   }
 
+  void _showIdentityChangedWarning(String newIdentityKey) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF13131B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: const BorderSide(color: Colors.white10),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+            SizedBox(width: 10),
+            Text('Security Warning', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Text(
+          'The identity key for @${widget.chatData.username} changed. This may mean they reinstalled the app, or someone is trying to intercept your messages. Verify safety numbers before continuing.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pop(); // Exit chat screen
+            },
+            child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await IdentityTrustService().acceptChangedIdentity(
+                username: widget.chatData.username,
+                newIdentitySignPublicKey: newIdentityKey,
+              );
+              if (mounted) {
+                setState(() {
+                  _identityTrust = IdentityTrustResult.trusted;
+                });
+              }
+              if (context.mounted) {
+                Navigator.of(context).pop();
+              }
+              _initializeE2E();
+            },
+            child: const Text('I Verified This', style: TextStyle(color: Color(0xFF10B981))),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _initializeE2E() async {
     final secureBox = await Hive.openBox('secure_vault');
-    
+
+    _isSafetyVerified = await IdentityTrustService().isSafetyVerified(widget.chatData.username);
+
     // Check if we already have an active Double Ratchet session
     final sessionJson = secureBox.get('session_${widget.chatData.username}') as String?;
     if (sessionJson != null && sessionJson.isNotEmpty) {
@@ -128,6 +192,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     if (_session == null) {
       final bundle = await ApiService().fetchPublicKey(widget.chatData.username);
       if (bundle != null && bundle['identity_key'] != null) {
+        final trust = await IdentityTrustService().checkAndPin(
+          username: widget.chatData.username,
+          identitySignPublicKey: bundle['identity_key'],
+        );
+        if (mounted) {
+          setState(() {
+            _identityTrust = trust;
+          });
+        }
+
+        if (trust == IdentityTrustResult.changed) {
+          if (mounted) {
+            setState(() => _isServiceReady = false);
+            _showIdentityChangedWarning(bundle['identity_key']);
+          }
+          return;
+        }
+
         try {
           final myDhPriv = secureBox.get('identity_dh_private_key') as String?;
           final myDhPub = secureBox.get('identity_dh_public_key') as String?;
@@ -153,6 +235,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           }
         } catch (e) {
           debugPrint('Error initiating Double Ratchet session: $e');
+        }
+      }
+    } else {
+      final cachedPeerKey = secureBox.get('recipient_sign_pub_${widget.chatData.username}') as String?;
+      if (cachedPeerKey != null && cachedPeerKey.isNotEmpty) {
+        final trust = await IdentityTrustService().checkAndPin(
+          username: widget.chatData.username,
+          identitySignPublicKey: cachedPeerKey,
+        );
+        if (mounted) {
+          setState(() {
+            _identityTrust = trust;
+          });
         }
       }
     }
@@ -194,6 +289,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             final aliceBundle = await ApiService().fetchPublicKey(widget.chatData.username);
             if (aliceBundle == null) throw Exception('Handshake failed: cannot fetch sender bundle.');
 
+            // TOFU trust check
+            final trust = await IdentityTrustService().checkAndPin(
+              username: widget.chatData.username,
+              identitySignPublicKey: aliceBundle['identity_key'],
+            );
+            if (mounted) {
+              setState(() {
+                _identityTrust = trust;
+              });
+            }
+
+            if (trust == IdentityTrustResult.changed) {
+              if (mounted) {
+                setState(() => _isServiceReady = false);
+                _showIdentityChangedWarning(aliceBundle['identity_key']);
+              }
+              return;
+            }
+
             // Read my keys
             final myDhPriv = secureBox.get('identity_dh_private_key') as String;
             final myDhPub = secureBox.get('identity_dh_public_key') as String;
@@ -225,19 +339,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           _session = session;
           _isServiceReady = true;
 
+          String cleanText = plaintext;
+          bool isVaultMsg = _isVaultMode;
+          int? expiryMs = _vaultTimerMs;
+
+          if (plaintext.startsWith('[VAULT_MSG:')) {
+            final closingBracket = plaintext.indexOf(']');
+            if (closingBracket != -1) {
+              isVaultMsg = true;
+              final meta = plaintext.substring(11, closingBracket);
+              final timerVal = int.tryParse(meta);
+              expiryMs = timerVal;
+              cleanText = plaintext.substring(closingBracket + 1);
+            }
+          }
+
+          // Check if it's a voice message prefix within the decrypted text
+          final isVoiceMsg = cleanText.startsWith('[Voice Transcript Note]');
+          String? voiceTranscriptText;
+          if (isVoiceMsg) {
+            voiceTranscriptText = cleanText.substring(24).trim();
+          }
+
           final newMsg = MessageData(
             id: DateTime.now().microsecondsSinceEpoch.toString(),
-            text: plaintext,
+            text: cleanText,
             isMe: false,
             time: 'Now',
             isRead: true,
-            isVault: _isVaultMode,
+            isVault: isVaultMsg,
             timestamp: DateTime.now().millisecondsSinceEpoch,
-            expiresAt: _vaultTimerMs != null
-                ? DateTime.now().millisecondsSinceEpoch + _vaultTimerMs!
+            expiresAt: (isVaultMsg && expiryMs != null)
+                ? DateTime.now().millisecondsSinceEpoch + expiryMs
                 : null,
+            isVoice: isVoiceMsg,
+            voiceDuration: isVoiceMsg ? 3 : null,
+            voiceTranscript: voiceTranscriptText,
           );
-          await MessageStorageService().saveMessage(widget.chatData.username, newMsg);
+          if (!isVaultMsg) {
+            await MessageStorageService().saveMessage(widget.chatData.username, newMsg);
+          }
           _addMessageAndCheckLimit(newMsg);
         } catch (e) {
           debugPrint('Decryption error: $e');
@@ -249,7 +390,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             isRead: true,
             timestamp: DateTime.now().millisecondsSinceEpoch,
           );
-          await MessageStorageService().saveMessage(widget.chatData.username, errMsg);
+          if (!_isVaultMode) {
+            await MessageStorageService().saveMessage(widget.chatData.username, errMsg);
+          }
           _addMessageAndCheckLimit(errMsg);
         }
       }
@@ -320,26 +463,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-
-
-    final settingsBox = Hive.box('settings');
-    final bool isDuress = settingsBox.get('is_duress_active', defaultValue: false) as bool;
-
-    if (isDuress) {
-      final newMessage = MessageData(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        text: text,
-        isMe: true,
-        time: 'Now',
-        isRead: false,
-        timestamp: DateTime.now().millisecondsSinceEpoch,
-      );
-      _messageController.clear();
-      setState(() => _isTyping = false);
-      _addMessageAndCheckLimit(newMessage);
-      return;
-    }
-
     final expiresAt = _vaultTimerMs != null
         ? DateTime.now().millisecondsSinceEpoch + _vaultTimerMs!
         : null;
@@ -369,13 +492,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     _messageController.clear();
     setState(() => _isTyping = false);
 
-    await MessageStorageService().saveMessage(widget.chatData.username, newMessage);
+    if (!_isVaultMode) {
+      await MessageStorageService().saveMessage(widget.chatData.username, newMessage);
+    }
     _addMessageAndCheckLimit(newMessage);
 
     if (_session != null && _isServiceReady) {
+      final plaintextPayload = _isVaultMode ? '[VAULT_MSG:$_vaultTimerMs]$text' : text;
       final ciphertext = await EncryptionService().encrypt(
         session: _session!,
-        plaintext: text,
+        plaintext: plaintextPayload,
       );
       
       // Save updated Double Ratchet session state
@@ -388,7 +514,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       );
       if (wasSent) {
         newMessage.isSent = true;
-        await MessageStorageService().saveMessage(widget.chatData.username, newMessage);
+        if (!_isVaultMode) {
+          await MessageStorageService().saveMessage(widget.chatData.username, newMessage);
+        }
         if (mounted) setState(() {});
       }
     }
@@ -421,8 +549,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       buffer.writeln('==============================================\n');
       
       for (final msg in _messages) {
+        if (msg.isVault) continue; // Do not export vault messages (RAM-only)
         final sender = msg.isMe ? 'Me' : widget.chatData.name;
-        final typePrefix = msg.isVoice ? '[VOICE MESSAGE - Duration: ${msg.voiceDuration}s] ' : '';
+        final typePrefix = msg.isVoice ? '[VOICE TRANSCRIPT NOTE - Duration: ${msg.voiceDuration}s] ' : '';
         final timeStr = _formatTime(msg.timestamp);
         
         buffer.writeln('[$timeStr] $sender: $typePrefix${msg.text}');
@@ -838,7 +967,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             children: [
               Icon(Icons.mic_rounded, color: Color(0xFF8083FF)),
               SizedBox(width: 8),
-              Text('Voice Transcript', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              Text('Voice Transcript Note', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
             ],
           ),
           content: Column(
@@ -881,7 +1010,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               onPressed: () {
                 Navigator.of(context).pop(controller.text.trim());
               },
-              child: const Text('Send Voice', style: TextStyle(color: Colors.white)),
+              child: const Text('Send Note', style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -890,31 +1019,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
     if (transcript == null || transcript.isEmpty) return;
 
+    final expiresAt = _vaultTimerMs != null
+        ? DateTime.now().millisecondsSinceEpoch + _vaultTimerMs!
+        : null;
+
     final newVoiceMsg = MessageData(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
-      text: "[Voice Message] $transcript",
+      text: "[Voice Transcript Note] $transcript",
       isMe: true,
       time: 'Now',
       isRead: false,
+      isVault: _isVaultMode,
       timestamp: DateTime.now().millisecondsSinceEpoch,
+      expiresAt: expiresAt,
       isVoice: true,
       voiceDuration: duration,
       voiceTranscript: transcript,
       isSent: false,
     );
 
-    final settingsBox = Hive.box('settings');
-    final bool isDuress = settingsBox.get('is_duress_active', defaultValue: false) as bool;
-    
-    if (!isDuress) {
+    if (!_isVaultMode) {
       await MessageStorageService().saveMessage(widget.chatData.username, newVoiceMsg);
     }
     _addMessageAndCheckLimit(newVoiceMsg);
 
     if (_session != null && _isServiceReady) {
+      final textToSend = "[Voice Transcript Note] $transcript";
+      final plaintextPayload = _isVaultMode ? '[VAULT_MSG:$_vaultTimerMs]$textToSend' : textToSend;
       final ciphertext = await EncryptionService().encrypt(
         session: _session!,
-        plaintext: "[Voice Message] $transcript",
+        plaintext: plaintextPayload,
       );
       
       // Save updated Double Ratchet session state
@@ -926,7 +1060,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       );
       if (wasSent) {
         newVoiceMsg.isSent = true;
-        if (!isDuress) {
+        if (!_isVaultMode) {
           await MessageStorageService().saveMessage(widget.chatData.username, newVoiceMsg);
         }
         if (mounted) setState(() {});
@@ -1137,14 +1271,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 final nav = Navigator.of(context);
                 final newText = editController.text.trim();
                 if (newText.isNotEmpty && newText != msg.text) {
-                  msg.text = newText;
-                  await MessageStorageService().saveMessage(widget.chatData.username, msg);
-                  final updatedHistory = await MessageStorageService().getMessages(widget.chatData.username);
-                  if (mounted) {
-                    setState(() {
-                      _messages.clear();
-                      _messages.addAll(updatedHistory);
-                    });
+                  setState(() {
+                    msg.text = newText;
+                  });
+                  if (!_isVaultMode) {
+                    await MessageStorageService().saveMessage(widget.chatData.username, msg);
+                    final updatedHistory = await MessageStorageService().getMessages(widget.chatData.username);
+                    if (mounted) {
+                      setState(() {
+                        _messages.clear();
+                        _messages.addAll(updatedHistory);
+                      });
+                    }
                   }
                 }
                 nav.pop();
@@ -1330,6 +1468,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     _socketSubscription?.cancel();
     _stateSubscription?.cancel();
     _expiryTimer?.cancel();
+    _messages.clear(); // Clear memory message list on exit (especially for vault mode)
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1412,7 +1551,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 4),
-                Icon(Icons.verified_user_rounded, size: 14, color: theme.primaryColor),
+                Icon(
+                  _identityTrust == IdentityTrustResult.changed
+                      ? Icons.gpp_bad_rounded
+                      : (_isSafetyVerified ? Icons.verified_user_rounded : Icons.shield_outlined),
+                  size: 14,
+                  color: _identityTrust == IdentityTrustResult.changed
+                      ? Colors.redAccent
+                      : (_isSafetyVerified ? const Color(0xFF10B981) : Colors.grey),
+                ),
               ],
             ),
             const SizedBox(height: 2),
@@ -1499,10 +1646,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             onPressed: _exportChatTranscript,
           ),
           IconButton(
-            icon: const Icon(Icons.verified_user_rounded),
+            icon: Icon(
+              _identityTrust == IdentityTrustResult.changed
+                  ? Icons.gpp_bad_rounded
+                  : (_isSafetyVerified ? Icons.verified_user_rounded : Icons.shield_outlined),
+            ),
             tooltip: 'Verify Safety Numbers',
             onPressed: _showSafetyNumbersDialog,
-            color: const Color(0xFF10B981),
+            color: _identityTrust == IdentityTrustResult.changed
+                ? Colors.redAccent
+                : (_isSafetyVerified ? const Color(0xFF10B981) : Colors.grey),
           ),
         ],
       ),
@@ -1619,18 +1772,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
 
                   // Input Bar
                   _buildInputBar(theme),
-
-                  // Secure Keyboard
-                  if (_isSecureKeyboardActive)
-                    SecureKeyboard(
-                      controller: _messageController,
-                      onSend: _handleSendMessage,
-                      onClose: () {
-                        setState(() {
-                          _isSecureKeyboardActive = false;
-                        });
-                      },
-                    ),
                 ],
               ),
             ],
@@ -1810,7 +1951,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                                 color: isMe ? Colors.white70 : (isDark ? Colors.white70 : Colors.black54),
                               ),
                               Text(
-                                'Whisper Transcript',
+                                'Transcribed Text Note',
                                 style: TextStyle(
                                   color: isMe ? Colors.white70 : (isDark ? Colors.white70 : Colors.black54),
                                   fontSize: 10,
@@ -2047,30 +2188,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
         children: [
           IconButton(
             icon: Icon(
-              _isSecureKeyboardActive ? Icons.shield_rounded : Icons.shield_outlined,
-              color: _isSecureKeyboardActive ? const Color(0xFF10B981) : theme.primaryColor,
-            ),
-            onPressed: () {
-              setState(() {
-                _isSecureKeyboardActive = !_isSecureKeyboardActive;
-                if (_isSecureKeyboardActive) {
-                  FocusScope.of(context).unfocus();
-                }
-              });
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.sentiment_satisfied_alt_rounded),
-            color: theme.primaryColor,
-            onPressed: () {
-              setState(() {
-                _isSecureKeyboardActive = true;
-                FocusScope.of(context).unfocus();
-              });
-            },
-          ),
-          IconButton(
-            icon: Icon(
               _isRecordingVoice ? Icons.mic_rounded : Icons.mic_none_rounded,
               color: _isRecordingVoice ? Colors.redAccent : theme.primaryColor,
             ),
@@ -2113,7 +2230,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                   )
                 : TextField(
                     controller: _messageController,
-                    readOnly: _isSecureKeyboardActive,
                     decoration: InputDecoration(
                       hintText: _isVaultMode ? 'Type ephemeral message...' : 'Type secure message...',
                       border: InputBorder.none,
@@ -2241,9 +2357,47 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 painter: _MockQrCodePainter(),
               ),
             ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _isSafetyVerified ? Icons.verified_user_rounded : Icons.shield_outlined,
+                  size: 16,
+                  color: _isSafetyVerified ? const Color(0xFF10B981) : Colors.grey,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _isSafetyVerified ? 'Status: Verified (Secure)' : 'Status: Unverified (TOFU Pinned)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: _isSafetyVerified ? const Color(0xFF10B981) : Colors.grey,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () async {
+              final newStatus = !_isSafetyVerified;
+              await IdentityTrustService().setSafetyVerified(widget.chatData.username, newStatus);
+              if (mounted) {
+                setState(() {
+                  _isSafetyVerified = newStatus;
+                });
+              }
+              if (context.mounted) {
+                Navigator.of(context).pop();
+              }
+            },
+            child: Text(
+              _isSafetyVerified ? 'Mark as Unverified' : 'Mark as Verified',
+              style: TextStyle(color: _isSafetyVerified ? Colors.redAccent : const Color(0xFF10B981)),
+            ),
+          ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Close', style: TextStyle(color: Colors.white60)),

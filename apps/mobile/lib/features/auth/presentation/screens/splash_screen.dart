@@ -4,9 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:hive/hive.dart';
 import 'welcome_screen.dart';
-import 'calculator_screen.dart';
-import 'weather_decoy_screen.dart';
-import 'notes_decoy_screen.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../navigation/main_navigation.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
@@ -167,37 +164,19 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     if (!mounted) return;
 
     // Capture the navigator before crossing any async boundary to satisfy the
-    // use_build_context_synchronously lint rule. The mounted check above
-    // guarantees the context is still valid at this point.
+    // use_build_context_synchronously lint rule.
     final navigator = Navigator.of(context);
 
-    final settingsBox = await Hive.openBox('settings');
-    final decoyState = settingsBox.get('decoy_app_state', defaultValue: 'none');
-
-    if (decoyState == 'calculator') {
+    final hasSession = await AuthService().tryAutoLogin();
+    if (!mounted) return;
+    if (hasSession) {
       navigator.pushReplacement(
-        MaterialPageRoute(builder: (_) => const CalculatorScreen()),
-      );
-    } else if (decoyState == 'weather') {
-      navigator.pushReplacement(
-        MaterialPageRoute(builder: (_) => const WeatherDecoyScreen()),
-      );
-    } else if (decoyState == 'notes') {
-      navigator.pushReplacement(
-        MaterialPageRoute(builder: (_) => const NotesDecoyScreen()),
+        MaterialPageRoute(builder: (_) => const MainNavigation()),
       );
     } else {
-      final hasSession = await AuthService().tryAutoLogin();
-      if (!mounted) return;
-      if (hasSession) {
-        navigator.pushReplacement(
-          MaterialPageRoute(builder: (_) => const MainNavigation()),
-        );
-      } else {
-        navigator.pushReplacement(
-          MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-        );
-      }
+      navigator.pushReplacement(
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+      );
     }
   }
 

@@ -6,6 +6,7 @@ import { pool } from '../db';
 import { sendSilentPush } from '../services/push';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'chatly-super-secret-key-change-in-prod';
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Safe send helper to catch WebSocket errors gracefully and prevent process crashes
 export function safeSend(ws: WebSocket, payload: string) {
@@ -45,41 +46,67 @@ setInterval(() => {
 
 // ─── WebSocket Connection Handler ─────────────────────────────────────────────
 export async function handleWebSocketConnection(socket: WebSocket, req: any) {
-  // Token can come from Authorization header or ?token= query param
   const authHeader = req.headers['authorization'];
   let token: string | null = null;
+  let ticket: string | null = null;
 
   if (authHeader?.startsWith('Bearer ')) {
     token = authHeader.slice(7);
   } else {
     try {
       const url = new URL(req.url, 'http://localhost');
-      token = url.searchParams.get('token');
+      ticket = url.searchParams.get('ticket');
+      // Only allow token query parameter in development mode to prevent JWT log leakage
+      if (NODE_ENV !== 'production') {
+        token = url.searchParams.get('token');
+      }
     } catch {
       // ignore malformed URLs
     }
-  }
-
-  if (!token) {
-    socket.close(4001, 'Unauthorized: Missing token');
-    return;
   }
 
   let userId: string;
   let username: string;
   let tokenEmailVerified = false;
 
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as {
-      userId: string;
-      username: string;
-      emailVerified?: boolean;
-    };
-    userId   = decoded.userId;
-    username = decoded.username;
-    tokenEmailVerified = !!decoded.emailVerified;
-  } catch {
-    socket.close(4002, 'Unauthorized: Invalid token');
+  if (ticket) {
+    try {
+      const ticketData = await redisClient.get(`ws-ticket:${ticket}`);
+      if (!ticketData) {
+        socket.close(4005, 'Unauthorized: Invalid or expired ticket');
+        return;
+      }
+      // Single-use: delete immediately
+      await redisClient.del(`ws-ticket:${ticket}`).catch(() => {});
+
+      const decoded = JSON.parse(ticketData) as {
+        userId: string;
+        username: string;
+        emailVerified?: boolean;
+      };
+      userId = decoded.userId;
+      username = decoded.username;
+      tokenEmailVerified = !!decoded.emailVerified;
+    } catch (err) {
+      socket.close(4005, 'Unauthorized: Ticket verification failed');
+      return;
+    }
+  } else if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as {
+        userId: string;
+        username: string;
+        emailVerified?: boolean;
+      };
+      userId   = decoded.userId;
+      username = decoded.username;
+      tokenEmailVerified = !!decoded.emailVerified;
+    } catch {
+      socket.close(4002, 'Unauthorized: Invalid token');
+      return;
+    }
+  } else {
+    socket.close(4001, 'Unauthorized: Missing token or ticket');
     return;
   }
 

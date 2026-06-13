@@ -33,13 +33,28 @@ if (JWT_SECRET.length < 32) {
 // without configuration. In production, restrict to the actual client domains
 // by setting ALLOWED_ORIGINS in your environment (comma-separated list).
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-  : (process.env.NODE_ENV === 'production' ? false : true);
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  : [];
+
+if (NODE_ENV === 'production' && allowedOrigins.length === 0) {
+  console.error('[FATAL] ALLOWED_ORIGINS must be configured in production. Refusing to start.');
+  process.exit(1);
+}
 
 // ─── Server Initialization ────────────────────────────────────────────────────
 const server = fastify({
   trustProxy: true,
   logger: {
+    // Redact sensitive keys in production logs to prevent info leaks
+    redact: [
+      'req.headers.authorization',
+      'req.headers.cookie',
+      'body.password',
+      'body.email',
+      'body.code',
+      'body.pushToken',
+      'body.ciphertext',
+    ],
     // Pretty-print in dev for readability; use JSON in production for log aggregators.
     transport: NODE_ENV !== 'production'
       ? { target: 'pino-pretty', options: { colorize: true } }
@@ -50,7 +65,7 @@ const server = fastify({
 // Register CORS before any other plugins so preflight responses are handled
 // before route handlers execute.
 server.register(fastifyCors, {
-  origin: allowedOrigins,
+  origin: NODE_ENV === 'production' ? allowedOrigins : true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -149,7 +164,10 @@ const gracefulShutdown = async (signal: string) => {
   }
 };
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+if (NODE_ENV !== 'test') {
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+  bootstrap();
+}
 
-bootstrap();
+export { server };

@@ -5,6 +5,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
+import 'api_service.dart';
 
 enum SocketConnectionState { disconnected, connecting, connected, reconnecting }
 
@@ -54,7 +55,7 @@ class WebSocketService {
   }
 
   /// Initialize and connect WebSocket channel
-  void connect({required String url, required String token}) {
+  void connect({required String url, required String token}) async {
     _currentToken = token;
     _currentUrl = url;
     _shouldReconnect = true;
@@ -65,7 +66,11 @@ class WebSocketService {
     }
 
     _updateState(SocketConnectionState.connecting);
-    final wsUri = Uri.parse('$url/ws/chat');
+
+    // Fetch short-lived single-use connection ticket
+    final ticket = await ApiService().getWsTicket();
+    final String query = ticket != null ? '?ticket=$ticket' : '?token=$token';
+    final wsUri = Uri.parse('$url/ws/chat$query');
 
     try {
       _channel = IOWebSocketChannel.connect(
