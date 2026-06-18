@@ -16,10 +16,13 @@ class TabOrderNotifier extends StateNotifier<List<String>> {
   static List<String> _loadTabOrder() {
     try {
       final box = Hive.box('settings');
-      final list = box.get('tab_order', defaultValue: ['chats', 'groups', 'pulse', 'settings']) as List;
-      return List<String>.from(list);
+      final raw = box.get('tab_order', defaultValue: ['chats', 'groups', 'settings']) as List;
+      // Filter out removed tabs (pulse) from any persisted settings
+      final allowed = {'chats', 'groups', 'settings'};
+      final filtered = raw.cast<String>().where((t) => allowed.contains(t)).toList();
+      return filtered.isNotEmpty ? filtered : ['chats', 'groups', 'settings'];
     } catch (_) {
-      return ['chats', 'groups', 'pulse', 'settings'];
+      return ['chats', 'groups', 'settings'];
     }
   }
 

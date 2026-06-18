@@ -2,10 +2,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../../../services/dead_mans_switch_service.dart';
 import '../../../auth/presentation/screens/welcome_screen.dart';
-import '../../../../providers/subscription_provider.dart';
 import '../../../../providers/layout_provider.dart';
 import '../../../../providers/theme_provider.dart';
 import '../../../../providers/wallpaper_provider.dart';
@@ -38,7 +36,6 @@ class SettingsScreen extends ConsumerWidget {
     final theme = Theme.of(context);
     final themeStyle = ref.watch(themeProvider);
     final isDark = themeStyle != ThemeStyle.light;
-    final isSponsor = ref.watch(sponsorshipProvider);
     final isForensicEnabled = ref.watch(forensicEraserProvider);
     final isActiveChatRandomizationEnabled = ref.watch(activeChatRandomizationProvider);
     final isTwoFactorEnabled = ref.watch(twoFactorProvider);
@@ -185,85 +182,6 @@ class SettingsScreen extends ConsumerWidget {
                   ],
                 );
               },
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Sponsor & Support Card (Chatly Pro Style)
-          GlassmorphicContainer(
-            padding: const EdgeInsets.all(20),
-            borderRadius: 24,
-            blur: 20,
-            backgroundOpacity: 0.08,
-            borderOpacity: 0.18,
-            baseColor: theme.primaryColor,
-            borderColor: theme.primaryColor,
-            boxShadow: [
-              BoxShadow(
-                color: theme.primaryColor.withValues(alpha: 0.12),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
-              ),
-            ],
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.star_rounded,
-                          color: isSponsor ? const Color(0xFFFFB300) : Colors.white.withValues(alpha: 0.9),
-                          size: 22,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          isSponsor ? 'Active Supporter' : 'Support Chatly',
-                          style: const TextStyle(
-                            color: Colors.white, 
-                            fontWeight: FontWeight.w800, 
-                            fontSize: 18,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Icon(
-                      isSponsor ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                      color: isSponsor ? const Color(0xFFEF4444) : Colors.white.withValues(alpha: 0.9),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  isSponsor
-                      ? 'Thank you for sponsoring the project! Your donation directly funds secure WebSocket servers, push notification gateways, and decentralized mesh development.'
-                      : 'Chatly is 100% free, has no ads, and does not harvest metadata. We rely entirely on voluntary support to pay server hosting bills.',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 13, height: 1.45),
-                ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: const Color(0xFF494BD6),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      elevation: 0,
-                    ),
-                    onPressed: () {
-                      _showSupportDialog(context, ref);
-                    },
-                    child: Text(
-                      isSponsor ? 'Manage Sponsorship' : 'Support & Sponsor',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                  ),
-                ),
-              ],
             ),
           ),
           const SizedBox(height: 24),
@@ -417,14 +335,6 @@ class SettingsScreen extends ConsumerWidget {
                     await Hive.box('settings').put('active_chat_randomization_enabled', val);
                     ref.read(activeChatRandomizationProvider.notifier).state = val;
                   },
-                ),
-                Divider(height: 1, indent: 60, color: Colors.white.withValues(alpha: 0.05)),
-                ListTile(
-                  leading: Icon(Icons.masks_rounded, color: iconColor),
-                  title: Text('Anonymous Pulses Limit', style: TextStyle(color: textColor)),
-                  subtitle: Text('Limit daily posts to prevent exposure', style: TextStyle(color: subColor.withValues(alpha: 0.5))),
-                  trailing: Icon(Icons.arrow_forward_ios_rounded, size: 14, color: iconColor),
-                  onTap: () => _showAnonymousLimitsDialog(context),
                 ),
                 Divider(height: 1, indent: 60, color: Colors.white.withValues(alpha: 0.05)),
                 ListTile(
@@ -673,185 +583,67 @@ class SettingsScreen extends ConsumerWidget {
     showDialog(
       context: context,
       builder: (context) {
-        bool useCircularDots = true;
-        bool useCircularEyes = true;
-        bool includeLogo = true;
-        Color qrColor = const Color(0xFF8083FF);
-
-        final List<Color> qrColorOptions = [
-          const Color(0xFF8083FF), // Purple Indigo
-          const Color(0xFF10B981), // Mint Emerald
-          const Color(0xFFFFB300), // Amber Gold
-          const Color(0xFFEF4444), // Crimson Red
-        ];
-
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF13131B),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-                side: const BorderSide(color: Colors.white10, width: 1.0),
+        return AlertDialog(
+          backgroundColor: const Color(0xFF13131B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Colors.white10, width: 1.0),
+          ),
+          title: const Text(
+            'My QR Code',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+            textAlign: TextAlign.center,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '@$myUsername',
+                style: const TextStyle(color: Colors.white60, fontSize: 13, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
               ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Premium Connection QR',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '@$myUsername',
-                      style: const TextStyle(color: Colors.white60, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    const SizedBox(height: 20),
-                    
-                    // Dense and Premium QR rendering
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          BoxShadow(
-                            color: qrColor.withValues(alpha: 0.15),
-                            blurRadius: 20,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          QrImageView(
-                            data: 'chatly:connect:@$myUsername',
-                            version: QrVersions.auto,
-                            size: 160.0,
-                            eyeStyle: QrEyeStyle(
-                              eyeShape: useCircularEyes ? QrEyeShape.circle : QrEyeShape.square,
-                              color: qrColor,
-                            ),
-                            dataModuleStyle: QrDataModuleStyle(
-                              dataModuleShape: useCircularDots ? QrDataModuleShape.circle : QrDataModuleShape.square,
-                              color: qrColor,
-                            ),
-                          ),
-                          if (includeLogo)
-                            Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: qrColor.withValues(alpha: 0.2), width: 1.5),
-                                boxShadow: [
-                                  BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 4),
-                                ],
-                              ),
-                              padding: const EdgeInsets.all(3),
-                              child: Image.asset('assets/images/app_icon.png'),
-                            ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    
-                    // Customizer controls
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Customize Design',
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12, fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    
-                    // Dot Style Switch
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Circular Dots', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                        Switch(
-                          value: useCircularDots,
-                          activeThumbColor: qrColor,
-                          onChanged: (val) => setState(() => useCircularDots = val),
-                        ),
-                      ],
-                    ),
-                    
-                    // Eye Style Switch
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Circular Eyes', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                        Switch(
-                          value: useCircularEyes,
-                          activeThumbColor: qrColor,
-                          onChanged: (val) => setState(() => useCircularEyes = val),
-                        ),
-                      ],
-                    ),
-                    
-                    // Logo Switch
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Include Logo Overlay', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                        Switch(
-                          value: includeLogo,
-                          activeThumbColor: qrColor,
-                          onChanged: (val) => setState(() => includeLogo = val),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    
-                    // Theme color selector bubbles
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Brand Tint', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                        Row(
-                          children: qrColorOptions.map((color) {
-                            final isSelected = qrColor == color;
-                            return GestureDetector(
-                              onTap: () => setState(() => qrColor = color),
-                              child: Container(
-                                margin: const EdgeInsets.only(left: 8),
-                                width: 22,
-                                height: 22,
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: isSelected ? Colors.white : Colors.transparent,
-                                    width: 2.0,
-                                  ),
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: qrColor,
-                        minimumSize: const Size(double.infinity, 44),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Done', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF8083FF).withValues(alpha: 0.15),
+                      blurRadius: 20,
+                      spreadRadius: 2,
                     ),
                   ],
                 ),
+                child: QrImageView(
+                  data: 'chatly:connect:@$myUsername',
+                  version: QrVersions.auto,
+                  size: 180.0,
+                  eyeStyle: const QrEyeStyle(
+                    eyeShape: QrEyeShape.circle,
+                    color: Color(0xFF8083FF),
+                  ),
+                  dataModuleStyle: const QrDataModuleStyle(
+                    dataModuleShape: QrDataModuleShape.circle,
+                    color: Color(0xFF494BD6),
+                  ),
+                ),
               ),
-            );
-          },
+              const SizedBox(height: 16),
+              const Text(
+                'Ask a contact to scan this code to connect with you instantly.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white54, fontSize: 12, height: 1.4),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close', style: TextStyle(color: Color(0xFF8083FF))),
+            ),
+          ],
         );
       },
     );
@@ -1152,184 +944,11 @@ class SettingsScreen extends ConsumerWidget {
     ).then((_) => textController.dispose());
   }
 
-  void _showSupportDialog(BuildContext context, WidgetRef ref) {
-    final isSponsor = ref.read(sponsorshipProvider);
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF13131B),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: const BorderSide(color: Colors.white10),
-          ),
-          title: Row(
-            children: [
-              Icon(
-                isSponsor ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                color: const Color(0xFFEF4444),
-              ),
-              const SizedBox(width: 10),
-              const Text(
-                'Support Chatly',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Since we never show ads or sell data, Chatly is 100% powered by user sponsorships. Help cover secure server costs and release fees to publish to Google Play & Apple App Store.',
-                style: TextStyle(fontSize: 12, height: 1.45, color: Colors.white70),
-              ),
-              const SizedBox(height: 20),
-              _buildRazorpayDonationTile(
-                context,
-                ref,
-                title: 'Server Supporter',
-                description: 'Keep secure WebSocket servers running 24/7.',
-                price: '₹199 once',
-                url: 'https://razorpay.me/@CodeChap?amount=KxK8ikz%2BGFZ8lMDydVeeuA%3D%3D',
-                icon: Icons.dns_rounded,
-                color: const Color(0xFF10B981),
-              ),
-              const SizedBox(height: 10),
-              _buildRazorpayDonationTile(
-                context,
-                ref,
-                title: 'App Store Publisher',
-                description: 'Fund Play Store & App Store developer fees.',
-                price: '₹299 once',
-                url: 'https://razorpay.me/@CodeChap?amount=kXxURMaXFk%2Bmrv%2B9uGrYpg%3D%3D',
-                icon: Icons.rocket_launch_rounded,
-                color: const Color(0xFF6366F1),
-              ),
-
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close', style: TextStyle(color: Colors.white60)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildRazorpayDonationTile(
-    BuildContext context,
-    WidgetRef ref, {
-    required String title,
-    required String description,
-    required String price,
-    required String url,
-    required IconData icon,
-    required Color color,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.015),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: color, size: 18),
-        ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4.0),
-          child: Text(description, style: const TextStyle(fontSize: 10, color: Colors.white54)),
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            price,
-            style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 10),
-          ),
-        ),
-        onTap: () async {
-          final uri = Uri.parse(url);
-          // Open payment link FIRST
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          }
-          // Then ask user to confirm payment was completed
-          if (context.mounted) {
-            final confirmed = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                backgroundColor: const Color(0xFF13131B),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  side: const BorderSide(color: Colors.white10),
-                ),
-                title: const Text('Payment Complete?',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                content: const Text(
-                  'Did your payment go through successfully?',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(false),
-                    child: const Text('Not yet', style: TextStyle(color: Colors.white54)),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(true),
-                    child: const Text('Yes, paid!',
-                        style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
-            );
-            if (confirmed == true) {
-              await ref.read(sponsorshipProvider.notifier).setSponsorStatus(true);
-              if (context.mounted) {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Row(
-                      children: [
-                        Icon(Icons.favorite_rounded, color: Colors.white, size: 16),
-                        SizedBox(width: 10),
-                        Expanded(child: Text('Thank you for supporting Chatly! ❤️')),
-                      ],
-                    ),
-                    backgroundColor: Color(0xFF10B981),
-                  ),
-                );
-              }
-            }
-          }
-        },
-      ),
-    );
-  }
-
-
-
   void _showLayoutCustomizerDialog(BuildContext context, WidgetRef ref) {
     // Tab metadata map
     const tabMeta = {
       'chats': {'label': 'Chats', 'subtitle': 'Your secure conversations', 'icon': Icons.chat_bubble_rounded},
       'groups': {'label': 'Groups', 'subtitle': 'Group E2E chat rooms', 'icon': Icons.groups_rounded},
-      'pulse': {'label': 'Pulse', 'subtitle': 'Anonymous feed & discovery', 'icon': Icons.masks_rounded},
       'settings': {'label': 'Settings', 'subtitle': 'App configuration & privacy', 'icon': Icons.settings_rounded},
     };
 
@@ -1443,7 +1062,7 @@ class SettingsScreen extends ConsumerWidget {
                       label: const Text('Reset to Default Order'),
                       onPressed: () async {
                         await ref.read(tabOrderProvider.notifier).updateTabOrder(
-                          ['chats', 'groups', 'pulse', 'settings'],
+                          ['chats', 'groups', 'settings'],
                         );
                         setDialogState(() {});
                       },
@@ -1916,73 +1535,6 @@ class SettingsScreen extends ConsumerWidget {
               child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
             ),
           ],
-        );
-      },
-    );
-  }
-
-  void _showAnonymousLimitsDialog(BuildContext context) {
-    final settingsBox = Hive.box('settings');
-    int dailyLimit = settingsBox.get('pulse_daily_limit', defaultValue: 2) as int;
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF13131B),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(24),
-                side: const BorderSide(color: Colors.white10),
-              ),
-              title: const Text('Pulse Limits Setting', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Set daily anonymous pulse posts limit to prevent data exhaust:', style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.4)),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Daily Limit:', style: TextStyle(color: Colors.white60, fontSize: 12)),
-                      Text('$dailyLimit Pulses', style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 14)),
-                    ],
-                  ),
-                  Slider(
-                    value: dailyLimit.toDouble(),
-                    min: 2,
-                    max: 10,
-                    divisions: 8,
-                    activeColor: const Color(0xFF10B981),
-                    onChanged: (val) {
-                      setState(() {
-                        dailyLimit = val.toInt();
-                      });
-                    },
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
-                ),
-                ElevatedButton(
-                  onPressed: () async {
-                    final nav = Navigator.of(context);
-                    final messenger = ScaffoldMessenger.of(context);
-                    await settingsBox.put('pulse_daily_limit', dailyLimit);
-                    nav.pop();
-                    messenger.showSnackBar(
-                      const SnackBar(content: Text('Pulse posting daily limit updated!')),
-                    );
-                  },
-                  child: const Text('Save'),
-                ),
-              ],
-            );
-          },
         );
       },
     );

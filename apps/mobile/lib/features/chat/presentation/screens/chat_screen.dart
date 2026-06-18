@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -12,28 +12,20 @@ import '../../../../services/websocket_service.dart';
 import '../../../../services/forensic_eraser_service.dart';
 import '../../../../services/message_storage_service.dart';
 import '../../../../providers/wallpaper_provider.dart';
-import '../../../../services/p2p_mesh_service.dart';
 import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../services/api_service.dart';
 import '../../../../services/push_notification_service.dart';
+import '../widgets/message_bubble.dart';
+import '../widgets/chat_input_bar.dart';
+import '../widgets/chat_painters.dart';
 
-// ─── Reaction catalogue ─────────────────────────────────────────────────────
-final _kReactions = [
-  {'key': 'thumb_up',                 'icon': Icons.thumb_up_rounded,                  'label': 'Like'},
-  {'key': 'favorite',                 'icon': Icons.favorite_rounded,                  'label': 'Love'},
-  {'key': 'bolt',                     'icon': Icons.bolt_rounded,                      'label': 'Wow'},
-  {'key': 'sentiment_very_satisfied', 'icon': Icons.sentiment_very_satisfied_rounded,  'label': 'Haha'},
-  {'key': 'sentiment_dissatisfied',   'icon': Icons.sentiment_dissatisfied_rounded,    'label': 'Sad'},
-  {'key': 'celebration',              'icon': Icons.celebration_rounded,               'label': 'Celebrate'},
-];
-
-// ─── Vault timer catalogue ────────────────────────────────────────────────────
-final _kTimerOptions = [
-  {'label': 'Off',    'ms': null},
-  {'label': '30 s',   'ms': 30000},
-  {'label': '1 min',  'ms': 60000},
-  {'label': '5 min',  'ms': 300000},
-  {'label': '1 hr',   'ms': 3600000},
+// Vault timer options used by the disappearing-messages selector sheet.
+const _kTimerOptions = [
+  {'label': 'Off',   'ms': null},
+  {'label': '30 s',  'ms': 30000},
+  {'label': '1 min', 'ms': 60000},
+  {'label': '5 min', 'ms': 300000},
+  {'label': '1 hr',  'ms': 3600000},
 ];
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -57,6 +49,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   StreamSubscription? _socketSubscription;
   StreamSubscription? _stateSubscription;
   Timer? _expiryTimer;
+  // Auto-clears the "X is typing" banner if no follow-up event arrives within 6 s.
+  // Prevents the indicator from freezing if the remote app crashes or loses network.
+  Timer? _typingClearTimer;
   DoubleRatchetSession? _session;
   bool _isServiceReady = false;
 
@@ -90,9 +85,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     });
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  DATA LAYER
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _loadMessageHistory() async {
     // In duress mode, simply show an empty conversation
@@ -260,13 +255,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   }
 
   void _handleIncomingSocketPayload(Map<String, dynamic> payload) async {
-    if (payload['senderId'] != widget.chatData.username) {
+    final msgType = payload['type'] as String?;
+
+    // Server acknowledgement that our message was relayed (or queued for offline delivery).
+    // Flip isSent on the matching optimistic message without a full re-render.
+    if (msgType == 'sent_ack') {
+      final clientId = payload['clientId'] as String?;
+      if (clientId != null && mounted) {
+        setState(() {
+          for (final msg in _messages) {
+            if (msg.id == clientId && !msg.isSent) {
+              msg.isSent = true;
+            }
+          }
+        });
+      }
       return;
     }
 
-    if (payload['type'] == 'typing') {
-      setState(() => _isTyping = payload['isTyping'] ?? false);
-    } else if (payload['type'] == 'message') {
+    // Only process events from the contact this screen is open for
+    if (payload['senderId'] != widget.chatData.username) return;
+
+    if (msgType == 'typing') {
+      final isTyping = payload['isTyping'] as bool? ?? false;
+      _typingClearTimer?.cancel();
+      if (isTyping) {
+        // Auto-clear after 6 s in case the sender disconnects mid-typing
+        _typingClearTimer = Timer(const Duration(seconds: 6), () {
+          if (mounted) setState(() => _isTyping = false);
+        });
+      }
+      setState(() => _isTyping = isTyping);
+    } else if (msgType == 'message') {
       final ciphertext = payload['ciphertext'];
       if (ciphertext != null) {
         try {
@@ -384,7 +404,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           debugPrint('Decryption error: $e');
           final errMsg = MessageData(
             id: DateTime.now().microsecondsSinceEpoch.toString(),
-            text: '[Decryption failed — secure handshake mismatch]',
+            text: '[Decryption failed â€” secure handshake mismatch]',
             isMe: false,
             time: 'Now',
             isRead: true,
@@ -437,8 +457,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(isRandomizationEnabled
-                      ? 'History limit reached — oldest messages scrambled.'
-                      : 'History limit reached — oldest messages shredded.'),
+                      ? 'History limit reached â€” oldest messages scrambled.'
+                      : 'History limit reached â€” oldest messages shredded.'),
                 ),
               ],
             ),
@@ -498,43 +518,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     _addMessageAndCheckLimit(newMessage);
 
     if (_session != null && _isServiceReady) {
-      final plaintextPayload = _isVaultMode ? '[VAULT_MSG:$_vaultTimerMs]$text' : text;
+      final plaintextPayload =
+          _isVaultMode ? '[VAULT_MSG:$_vaultTimerMs]$text' : text;
       final ciphertext = await EncryptionService().encrypt(
         session: _session!,
         plaintext: plaintextPayload,
       );
-      
-      // Save updated Double Ratchet session state
-      final secureBox = await Hive.openBox('secure_vault');
-      await secureBox.put('session_${widget.chatData.username}', jsonEncode(_session!.toJson()));
 
-      final wasSent = await WebSocketService().sendMessage(
+      // Persist the advanced ratchet state so the next message uses the new chain key
+      final secureBox = await Hive.openBox('secure_vault');
+      await secureBox.put(
+        'session_${widget.chatData.username}',
+        jsonEncode(_session!.toJson()),
+      );
+
+      // Pass newMessage.id as clientId â€” the server echoes it in sent_ack so we
+      // can flip isSent without guessing which message was acknowledged.
+      await WebSocketService().sendMessage(
         recipientId: widget.chatData.username,
         ciphertext: ciphertext,
+        clientId: newMessage.id,
       );
-      if (wasSent) {
-        newMessage.isSent = true;
-        if (!_isVaultMode) {
-          await MessageStorageService().saveMessage(widget.chatData.username, newMessage);
-        }
-        if (mounted) setState(() {});
-      }
+      // isSent is flipped to true via the incoming sent_ack event in
+      // _handleIncomingSocketPayload, not here â€” avoids double state updates
+      // and makes offline/outbox sends consistent.
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  PREMIUM NEW FEATURE HELPERS
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   String _getAdaptiveRouteLabel() {
     final socketState = WebSocketService().connectionState;
-    final isPeerNearby = P2PMeshService().discoveredPeers.any((p) => p.username == widget.chatData.username);
-    if (isPeerNearby) {
-      return '📡 P2P Mesh';
-    } else if (socketState == SocketConnectionState.connected) {
-      return '🌐 WebSocket';
+    if (socketState == SocketConnectionState.connected) {
+      return 'ðŸŒ WebSocket';
     } else {
-      return '💾 Outbox Cache';
+      return 'ðŸ’¾ Outbox Cache';
     }
   }
 
@@ -556,12 +576,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
         
         buffer.writeln('[$timeStr] $sender: $typePrefix${msg.text}');
         if (msg.isVoice && msg.voiceTranscript != null) {
-          buffer.writeln('   └─ Transcript: "${msg.voiceTranscript}"');
+          buffer.writeln('   â””â”€ Transcript: "${msg.voiceTranscript}"');
         }
       }
       
       buffer.writeln('\n==============================================');
-      buffer.writeln('END OF TRANSCRIPT — SECURED BY CHATLY');
+      buffer.writeln('END OF TRANSCRIPT â€” SECURED BY CHATLY');
       buffer.writeln('==============================================');
       
       final text = buffer.toString();
@@ -735,7 +755,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                       SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          '⚠️ WARNING: High Entropy detected. Replying speed is dropping and message lengths are diminishing. Fading interest likely.',
+                          'âš ï¸ WARNING: High Entropy detected. Replying speed is dropping and message lengths are diminishing. Fading interest likely.',
                           style: TextStyle(color: Colors.redAccent, fontSize: 12, height: 1.4),
                         ),
                       ),
@@ -756,7 +776,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                       SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          '✅ STABLE INTEREST: Replying intervals and vocabulary density indicate healthy engagement levels.',
+                          'âœ… STABLE INTEREST: Replying intervals and vocabulary density indicate healthy engagement levels.',
                           style: TextStyle(color: Color(0xFF10B981), fontSize: 12, height: 1.4),
                         ),
                       ),
@@ -1044,33 +1064,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     _addMessageAndCheckLimit(newVoiceMsg);
 
     if (_session != null && _isServiceReady) {
-      final textToSend = "[Voice Transcript Note] $transcript";
-      final plaintextPayload = _isVaultMode ? '[VAULT_MSG:$_vaultTimerMs]$textToSend' : textToSend;
+      final textToSend = '[Voice Transcript Note] $transcript';
+      final plaintextPayload =
+          _isVaultMode ? '[VAULT_MSG:$_vaultTimerMs]$textToSend' : textToSend;
       final ciphertext = await EncryptionService().encrypt(
         session: _session!,
         plaintext: plaintextPayload,
       );
-      
-      // Save updated Double Ratchet session state
+
       final secureBox = await Hive.openBox('secure_vault');
-      await secureBox.put('session_${widget.chatData.username}', jsonEncode(_session!.toJson()));
-      final wasSent = await WebSocketService().sendMessage(
+      await secureBox.put(
+        'session_${widget.chatData.username}',
+        jsonEncode(_session!.toJson()),
+      );
+
+      await WebSocketService().sendMessage(
         recipientId: widget.chatData.username,
         ciphertext: ciphertext,
+        clientId: newVoiceMsg.id,
       );
-      if (wasSent) {
-        newVoiceMsg.isSent = true;
-        if (!_isVaultMode) {
-          await MessageStorageService().saveMessage(widget.chatData.username, newVoiceMsg);
-        }
-        if (mounted) setState(() {});
-      }
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  REACTIONS
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _showMessageOptions(int index) {
     final msg = _messages[index];
@@ -1107,7 +1125,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: _kReactions.map((r) {
+                  children: kReactions.map((r) {
                     final key = r['key'] as String;
                     final icon = r['icon'] as IconData;
                     final label = r['label'] as String;
@@ -1295,9 +1313,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     );
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  VAULT TIMER SELECTOR
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _showVaultTimerSelector() {
     showModalBottomSheet(
@@ -1393,9 +1411,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     );
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  DELETE
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _showDeleteMessageDialog(int index) {
     showDialog(
@@ -1468,15 +1486,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     _socketSubscription?.cancel();
     _stateSubscription?.cancel();
     _expiryTimer?.cancel();
-    _messages.clear(); // Clear memory message list on exit (especially for vault mode)
+    _typingClearTimer?.cancel();
+    _recordingTimer?.cancel();
+    _messages.clear();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  BUILD
-  // ──────────────────────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @override
   Widget build(BuildContext context) {
@@ -1566,7 +1586,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             Row(
               children: [
                 Text(
-                  widget.chatData.isOnline ? 'Online • Vibing' : 'Offline',
+                  widget.chatData.isOnline ? 'Online â€¢ Vibing' : 'Offline',
                   style: TextStyle(
                     fontSize: 11,
                     color: widget.chatData.isOnline
@@ -1628,7 +1648,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               icon: Badge(
                 isLabelVisible: _vaultTimerMs != null,
                 backgroundColor: const Color(0xFFF59E0B),
-                label: const Text('●', style: TextStyle(fontSize: 6)),
+                label: const Text('â—', style: TextStyle(fontSize: 6)),
                 child: const Icon(Icons.timer_rounded),
               ),
               tooltip: 'Disappearing Messages Timer',
@@ -1736,9 +1756,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                             crossAxisAlignment:
                                 msg.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                             children: [
-                              _buildMessageBubble(msg, theme),
+                              ChatMessageBubble(
+                                message: msg,
+                                isPlaying: _isPlayingMap[msg.id] ?? false,
+                                isTranscriptExpanded: _isTranscriptExpandedMap[msg.id] ?? false,
+                                waveHeights: _waveHeights,
+                                onTogglePlay: () => setState(
+                                    () => _isPlayingMap[msg.id] = !(_isPlayingMap[msg.id] ?? false)),
+                                onToggleTranscript: () => setState(() =>
+                                    _isTranscriptExpandedMap[msg.id] =
+                                        !(_isTranscriptExpandedMap[msg.id] ?? false)),
+                                formatTime: _formatTime,
+                              ),
                               if (msg.reactions.isNotEmpty)
-                                _buildReactionPill(msg, theme),
+                                ReactionPill(
+                                  message: msg,
+                                  onTap: () async {
+                                    final updated = await MessageStorageService()
+                                        .getMessages(widget.chatData.username);
+                                    if (mounted) {
+                                      setState(() {
+                                        _messages.clear();
+                                        _messages.addAll(updated);
+                                      });
+                                    }
+                                  },
+                                ),
                             ],
                           ),
                         );
@@ -1771,498 +1814,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                     ),
 
                   // Input Bar
-                  _buildInputBar(theme),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  //  WIDGETS
-  // ──────────────────────────────────────────────────────────────────────────
-
-  Widget _buildMessageBubble(MessageData message, ThemeData theme) {
-    final isMe = message.isMe;
-    final isDark = theme.brightness == Brightness.dark;
-
-    // Check if locked
-    final bool isLocked = message.isTimeLocked &&
-        message.unlocksAt != null &&
-        DateTime.now().millisecondsSinceEpoch < message.unlocksAt!;
-
-    if (isLocked) {
-      final remainingMs = message.unlocksAt! - DateTime.now().millisecondsSinceEpoch;
-      String lockedLabel = '';
-      if (remainingMs > 0) {
-        final totalSecs = (remainingMs / 1000).ceil();
-        final mins = totalSecs ~/ 60;
-        final secs = totalSecs % 60;
-        lockedLabel = '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
-      }
-
-      final bubbleColor = isMe
-          ? theme.primaryColor
-          : (isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0));
-      final textColor = isMe ? Colors.white : (isDark ? Colors.white : Colors.black87);
-
-      return Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-          decoration: BoxDecoration(
-            color: bubbleColor,
-            borderRadius: BorderRadius.only(
-              topLeft: const Radius.circular(20),
-              topRight: const Radius.circular(20),
-              bottomLeft: Radius.circular(isMe ? 20 : 4),
-              bottomRight: Radius.circular(isMe ? 4 : 20),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.lock_rounded, size: 14, color: Colors.orange),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Time-Locked Message',
-                    style: TextStyle(
-                      color: textColor,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Decrypts in: $lockedLabel',
-                style: TextStyle(
-                  color: textColor.withValues(alpha: 0.7),
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    // Check if voice message
-    if (message.isVoice) {
-      final bubbleColor = isMe
-          ? theme.primaryColor
-          : (isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0));
-      final textColor = isMe ? Colors.white : (isDark ? Colors.white : Colors.black87);
-      
-      final bool isPlaying = _isPlayingMap[message.id] ?? false;
-      final bool isExpanded = _isTranscriptExpandedMap[message.id] ?? false;
-
-      return Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 4),
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-          child: Column(
-            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: bubbleColor,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(20),
-                    topRight: const Radius.circular(20),
-                    bottomLeft: Radius.circular(isMe ? 20 : 4),
-                    bottomRight: Radius.circular(isMe ? 4 : 20),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: Icon(
-                            isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded,
-                            size: 32,
-                            color: isMe ? Colors.white : theme.primaryColor,
-                          ),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () {
-                            setState(() {
-                              _isPlayingMap[message.id] = !isPlaying;
-                            });
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                        // Mock wave lines
-                        Expanded(
-                          child: SizedBox(
-                            height: 24,
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: _waveHeights.map((h) {
-                                return Container(
-                                  width: 2.5,
-                                  height: h,
-                                  decoration: BoxDecoration(
-                                    color: (isMe ? Colors.white : theme.primaryColor).withValues(alpha: isPlaying ? 0.9 : 0.4),
-                                    borderRadius: BorderRadius.circular(1),
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          isPlaying ? '0:01' : '0:${message.voiceDuration?.toString().padLeft(2, '0') ?? '03'}',
-                          style: TextStyle(color: textColor.withValues(alpha: 0.7), fontSize: 10),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        InkWell(
-                          onTap: () {
-                            setState(() {
-                              _isTranscriptExpandedMap[message.id] = !isExpanded;
-                            });
-                          },
-                          child: Row(
-                            children: [
-                              Icon(
-                                isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                                size: 16,
-                                color: isMe ? Colors.white70 : (isDark ? Colors.white70 : Colors.black54),
-                              ),
-                              Text(
-                                'Transcribed Text Note',
-                                style: TextStyle(
-                                  color: isMe ? Colors.white70 : (isDark ? Colors.white70 : Colors.black54),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          _formatTime(message.timestamp),
-                          style: TextStyle(color: textColor.withValues(alpha: 0.5), fontSize: 9),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              if (isExpanded)
-                Container(
-                  margin: const EdgeInsets.only(top: 4, left: 4, right: 4),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.04),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: Text(
-                    message.voiceTranscript ?? 'No transcript available.',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                      fontStyle: FontStyle.italic,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    String displayText = message.text;
-    double emojiSize = 15;
-    bool isSizedEmoji = false;
-
-    if (displayText.startsWith('[size:')) {
-      final match = RegExp(r'^\[size:(\w+)\](.*)').firstMatch(displayText);
-      if (match != null) {
-        final sizeType = match.group(1);
-        final content = match.group(2) ?? '';
-        displayText = content;
-        isSizedEmoji = true;
-
-        if (sizeType == 'small') {
-          emojiSize = 16;
-        } else if (sizeType == 'large') {
-          emojiSize = 48;
-        } else if (sizeType == 'xlarge') {
-          emojiSize = 72;
-        } else {
-          emojiSize = 30; // medium
-        }
-      }
-    }
-
-    final bool isSingleEmoji = isSizedEmoji && displayText.trim().length <= 4;
-
-    Color bubbleColor;
-    if (isSingleEmoji) {
-      bubbleColor = Colors.transparent;
-    } else if (message.isVault) {
-      bubbleColor = isMe
-          ? const Color(0xFFF59E0B)
-          : (isDark ? const Color(0xFF2C1B0F) : const Color(0xFFFEF3C7));
-    } else {
-      bubbleColor = isMe
-          ? theme.primaryColor
-          : (isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0));
-    }
-
-    final textColor = isMe ? Colors.white : (isDark ? Colors.white : Colors.black87);
-
-    // Compute remaining life for vault messages
-    String? expiryLabel;
-    if (message.expiresAt != null) {
-      final remaining = message.expiresAt! - DateTime.now().millisecondsSinceEpoch;
-      if (remaining > 0) {
-        final secs = (remaining / 1000).ceil();
-        expiryLabel = secs >= 60 ? '${(secs / 60).ceil()}m' : '${secs}s';
-      }
-    }
-
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: isSingleEmoji ? const EdgeInsets.symmetric(horizontal: 4, vertical: 4) : const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
-          color: bubbleColor,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(20),
-            topRight: const Radius.circular(20),
-            bottomLeft: Radius.circular(isMe ? 20 : 4),
-            bottomRight: Radius.circular(isMe ? 4 : 20),
-          ),
-          boxShadow: isSingleEmoji ? [] : [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              displayText,
-              style: TextStyle(
-                color: isSingleEmoji ? Colors.white : textColor, 
-                fontSize: isSingleEmoji ? emojiSize : 15, 
-                height: 1.4
-              ),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (message.isVault) ...[
-                  Icon(Icons.hourglass_empty_rounded,
-                      size: 10, color: isMe ? Colors.white70 : Colors.amber),
-                  const SizedBox(width: 4),
-                ],
-                if (expiryLabel != null) ...[
-                  Icon(Icons.timer_outlined, size: 10, color: isMe ? Colors.white60 : Colors.amber),
-                  const SizedBox(width: 2),
-                  Text(expiryLabel,
-                      style: TextStyle(
-                          fontSize: 9,
-                          color: isMe ? Colors.white60 : Colors.amber,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 6),
-                ],
-                Text(
-                  _formatTime(message.timestamp),
-                  style: TextStyle(
-                    color: isMe ? Colors.white60 : Colors.black45,
-                    fontSize: 9,
-                  ),
-                ),
-                if (isMe) ...[
-                  const SizedBox(width: 4),
-                  Icon(
-                    !message.isSent
-                        ? Icons.schedule_rounded
-                        : (message.isRead ? Icons.done_all_rounded : Icons.done_rounded),
-                    size: 12,
-                    color: Colors.white70,
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildReactionPill(MessageData message, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8, left: 4, right: 4),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        children: message.reactions.entries.map((entry) {
-          final meta = _kReactions.firstWhere(
-            (r) => r['key'] == entry.key,
-            orElse: () => {'icon': Icons.circle, 'label': ''},
-          );
-          return GestureDetector(
-            onTap: () async {
-              await MessageStorageService()
-                  .saveReaction(widget.chatData.username, message.id, entry.key);
-              final updated = await MessageStorageService().getMessages(widget.chatData.username);
-              if (mounted) {
-                setState(() {
-                  _messages.clear();
-                  _messages.addAll(updated);
-                });
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: theme.primaryColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: theme.primaryColor.withValues(alpha: 0.25)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(meta['icon'] as IconData, size: 13, color: theme.primaryColor),
-                  if (entry.value > 1) ...[
-                    const SizedBox(width: 4),
-                    Text(
-                      '${entry.value}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: theme.primaryColor,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildInputBar(ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        border: Border(top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.08))),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(
-              _isRecordingVoice ? Icons.mic_rounded : Icons.mic_none_rounded,
-              color: _isRecordingVoice ? Colors.redAccent : theme.primaryColor,
-            ),
-            onPressed: () async {
-              if (_isRecordingVoice) {
-                _stopVoiceRecordingAndSend();
-              } else {
-                final granted = await _requestAudioPermission(context);
-                if (granted && mounted) {
-                  _startVoiceRecording();
-                }
-              }
-            },
-          ),
-          Expanded(
-            child: _isRecordingVoice
-                ? Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Colors.redAccent,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Recording... 0:${_recordingDuration.toString().padLeft(2, '0')}',
-                          style: const TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: _RecordingWaveform(),
-                        ),
-                      ],
-                    ),
-                  )
-                : TextField(
+                  ChatInputBar(
                     controller: _messageController,
-                    decoration: InputDecoration(
-                      hintText: _isVaultMode ? 'Type ephemeral message...' : 'Type secure message...',
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      fillColor: Colors.transparent,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
+                    isVaultMode: _isVaultMode,
+                    isRecordingVoice: _isRecordingVoice,
+                    recordingDuration: _recordingDuration,
+                    activeTimeLockDelayMs: _activeTimeLockDelayMs,
+                    onSendPressed: () {
+                      if (_isRecordingVoice) {
+                        _stopVoiceRecordingAndSend();
+                      } else {
+                        _handleSendMessage();
+                      }
+                    },
+                    onLongPressSend: _showTimeLockSelector,
+                    onMicPressed: () async {
+                      if (_isRecordingVoice) {
+                        _stopVoiceRecordingAndSend();
+                      } else {
+                        final granted = await _requestAudioPermission(context);
+                        if (granted && mounted) _startVoiceRecording();
+                      }
+                    },
                   ),
-          ),
-          GestureDetector(
-            onLongPress: () {
-              if (!_isRecordingVoice) {
-                _showTimeLockSelector();
-              }
-            },
-            child: IconButton(
-              icon: Icon(
-                _activeTimeLockDelayMs != null ? Icons.lock_clock_rounded : Icons.send_rounded,
+                ],
               ),
-              color: _activeTimeLockDelayMs != null
-                  ? Colors.orange
-                  : (_isVaultMode ? const Color(0xFFF59E0B) : theme.primaryColor),
-              onPressed: () {
-                if (_isRecordingVoice) {
-                  _stopVoiceRecordingAndSend();
-                } else {
-                  _handleSendMessage();
-                }
-              },
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -2354,7 +1933,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 borderRadius: BorderRadius.circular(12),
               ),
               child: CustomPaint(
-                painter: _MockQrCodePainter(),
+                painter: const MockQrCodePainter(),
               ),
             ),
             const SizedBox(height: 20),
@@ -2406,150 +1985,4 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       ),
     );
   }
-}
-
-class _RecordingWaveform extends StatefulWidget {
-  const _RecordingWaveform();
-
-  @override
-  State<_RecordingWaveform> createState() => _RecordingWaveformState();
-}
-
-class _RecordingWaveformState extends State<_RecordingWaveform> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  final List<double> _heights = List.generate(25, (index) => 4.0 + (index % 5) * 4.0);
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    )..repeat(reverse: true);
-    
-    _timer = Timer.periodic(const Duration(milliseconds: 120), (timer) {
-      if (mounted) {
-        setState(() {
-          for (int i = 0; i < _heights.length; i++) {
-            _heights[i] = 4.0 + (16.0 * (0.2 + 0.8 * (i % 3 == 0 ? 0.8 : 0.4)));
-            _heights[i] += (DateTime.now().millisecond % 10);
-            _heights[i] = _heights[i].clamp(4.0, 36.0);
-          }
-        });
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 36,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: _heights.map((h) {
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
-            width: 3,
-            height: h,
-            margin: const EdgeInsets.symmetric(horizontal: 1.5),
-            decoration: BoxDecoration(
-              color: Colors.redAccent.withValues(alpha: 0.8),
-              borderRadius: BorderRadius.circular(1.5),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-}
-
-class ChatWallpaperPainter extends CustomPainter {
-  final Color color;
-  ChatWallpaperPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color.withValues(alpha: 0.03)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
-    // Draw repeating pattern of bubbles and locks
-    const step = 80.0;
-    for (double x = 0; x < size.width; x += step) {
-      for (double y = 0; y < size.height; y += step) {
-        // Draw speech bubble contour
-        final rect = Rect.fromLTWH(x + 10, y + 10, 24, 16);
-        canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)), paint);
-        final path = Path()
-          ..moveTo(x + 12, y + 26)
-          ..lineTo(x + 8, y + 28)
-          ..lineTo(x + 14, y + 26);
-        canvas.drawPath(path, paint);
-
-        // Draw tiny lock
-        canvas.drawCircle(Offset(x + 45, y + 35), 3, paint);
-        canvas.drawRect(Rect.fromLTWH(x + 43, y + 35, 4, 4), paint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _MockQrCodePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.black
-      ..style = PaintingStyle.fill;
-
-    // Draw the three corner squares of a QR code
-    final squareSize = size.width * 0.25;
-    
-    // Top-left
-    canvas.drawRect(Rect.fromLTWH(0, 0, squareSize, squareSize), paint);
-    canvas.drawRect(Rect.fromLTWH(squareSize * 0.2, squareSize * 0.2, squareSize * 0.6, squareSize * 0.6), Paint()..color = Colors.white);
-    canvas.drawRect(Rect.fromLTWH(squareSize * 0.35, squareSize * 0.35, squareSize * 0.3, squareSize * 0.3), paint);
-
-    // Top-right
-    canvas.drawRect(Rect.fromLTWH(size.width - squareSize, 0, squareSize, squareSize), paint);
-    canvas.drawRect(Rect.fromLTWH(size.width - squareSize + squareSize * 0.2, squareSize * 0.2, squareSize * 0.6, squareSize * 0.6), Paint()..color = Colors.white);
-    canvas.drawRect(Rect.fromLTWH(size.width - squareSize + squareSize * 0.35, squareSize * 0.35, squareSize * 0.3, squareSize * 0.3), paint);
-
-    // Bottom-left
-    canvas.drawRect(Rect.fromLTWH(0, size.height - squareSize, squareSize, squareSize), paint);
-    canvas.drawRect(Rect.fromLTWH(squareSize * 0.2, size.height - squareSize + squareSize * 0.2, squareSize * 0.6, squareSize * 0.6), Paint()..color = Colors.white);
-    canvas.drawRect(Rect.fromLTWH(squareSize * 0.35, size.height - squareSize + squareSize * 0.35, squareSize * 0.3, squareSize * 0.3), paint);
-
-    // Draw some random smaller mock blocks in the center and bottom-right
-    final random = [
-      Rect.fromLTWH(size.width * 0.4, size.height * 0.1, 8, 8),
-      Rect.fromLTWH(size.width * 0.5, size.height * 0.2, 12, 6),
-      Rect.fromLTWH(size.width * 0.45, size.height * 0.35, 6, 12),
-      Rect.fromLTWH(size.width * 0.6, size.height * 0.4, 8, 8),
-      Rect.fromLTWH(size.width * 0.35, size.height * 0.6, 10, 10),
-      Rect.fromLTWH(size.width * 0.7, size.height * 0.6, 6, 16),
-      Rect.fromLTWH(size.width * 0.6, size.height * 0.75, 12, 12),
-      Rect.fromLTWH(size.width * 0.75, size.height * 0.75, 8, 8),
-      Rect.fromLTWH(size.width * 0.8, size.height * 0.45, 12, 8),
-      Rect.fromLTWH(size.width * 0.4, size.height * 0.8, 14, 6),
-    ];
-
-    for (final r in random) {
-      canvas.drawRect(r, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

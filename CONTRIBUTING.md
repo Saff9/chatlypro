@@ -1,69 +1,140 @@
 # Contributing to Chatly
 
-Thank you for taking an interest in contributing to Chatly. All contributions
-— bug reports, feature requests, documentation improvements, and pull requests —
-are genuinely appreciated.
+Thank you for taking the time to contribute. This guide covers everything needed to open a quality pull request.
 
 ---
 
-## Getting Started
+## Before You Start
 
-1. **Fork** the repository on GitHub.
-2. **Clone** your fork and follow the setup in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
-3. Create a **feature branch**: `git checkout -b feature/your-feature-name`
-4. Make your changes and **commit** with a clear, concise message:
-   `git commit -m "feat: add biometric unlock for vault chats"`
-5. Push the branch and open a **Pull Request** against `main`.
+- **Security issues** — please do **not** open a public issue. Follow the process in [docs/SECURITY.md](docs/SECURITY.md).
+- **New features** — open a discussion issue first so we can align on scope before writing code.
+- **Bug fixes** — go ahead and open a PR directly. Linking the issue is appreciated but not required.
+
+---
+
+## Development Setup
+
+### Prerequisites
+
+| Tool | Version |
+|---|---|
+| [Node.js](https://nodejs.org) | 18 or newer |
+| [Flutter SDK](https://flutter.dev/docs/get-started/install) | 3.x |
+| PostgreSQL 14+ | Optional — server boots with in-memory fallback |
+
+### Start the backend
+
+```bash
+cd packages/chatly-server
+npm install
+npm run dev          # listens on http://localhost:5000
+```
+
+### Run the Flutter client
+
+```bash
+cd apps/mobile
+flutter pub get
+flutter run -d chrome          # Web
+flutter run -d windows         # Windows desktop
+flutter run                    # Connected Android/iOS device
+```
+
+---
+
+## Code Style
+
+### Flutter / Dart
+
+- Follow the [official Dart style guide](https://dart.dev/guides/language/effective-dart/style).
+- Run `flutter analyze` — zero warnings before opening a PR.
+- Comments should explain **why**, never **what**. Well-named identifiers already communicate what.
+- Keep methods short. If a function exceeds ~60 lines, extract helpers.
+
+### TypeScript (server)
+
+- Run `npm run build` (TypeScript compile check) before pushing.
+- Use `const` over `let` wherever the binding is not reassigned.
+- Prefer `async`/`await` over raw Promise chains.
+- All database queries must use parameterised placeholders (`$1`, `$2` …) — never string interpolation.
+
+---
+
+## Security Rules (non-negotiable)
+
+1. **No plaintext message storage.** The server must never log or persist message content.
+2. **Parameterised SQL only.** No string concatenation in queries.
+3. **Validate all WebSocket inputs server-side** — size, type, membership.
+4. **Never commit secrets.** Use environment variables; `.env` is git-ignored.
+5. **Do not weaken E2E crypto.** Any change to `encryption_service.dart` or the key-exchange routes requires a reviewer with cryptography background.
+
+---
+
+## Pull Request Checklist
+
+Before requesting review, confirm:
+
+- [ ] `flutter analyze` passes with zero warnings.
+- [ ] `npm run build` passes in `packages/chatly-server`.
+- [ ] No debug `print()` or `console.log` statements left behind.
+- [ ] Dead code removed (unused imports, commented-out blocks, unreachable branches).
+- [ ] New REST routes have input validation and are guarded by the existing rate limiter.
+- [ ] New Flutter screens are either wired into navigation or documented as modal-only.
+- [ ] `README.md` / `CLAUDE.md` updated if you changed architecture, removed a feature, or added a new env variable.
 
 ---
 
 ## Commit Message Format
 
-Follow the conventional commit format:
+Follow the conventional commit format (72 chars max on the subject line):
 
 ```
-<type>(<scope>): <description>
-
-Types: feat | fix | docs | style | refactor | test | chore
+<type>(<scope>): <short description>
 ```
+
+| Type | When to use |
+|---|---|
+| `feat` | New user-visible behaviour |
+| `fix` | Bug fix |
+| `refactor` | Internal restructure with no behaviour change |
+| `perf` | Performance improvement |
+| `security` | Security hardening |
+| `docs` | Documentation only |
+| `chore` | Build scripts, CI, dependency bumps |
 
 Examples:
-- `feat(auth): add TOTP-based 2FA toggle`
-- `fix(chat): correct message timestamp timezone offset`
-- `docs(readme): add Railway deploy button`
+
+```
+fix(chat): clear typing indicator after 6 s timeout
+feat(ws): add sent_ack event for reliable isSent confirmation
+security(server): store group messages for offline members in Redis
+```
 
 ---
 
-## Code Standards
+## What Will Not Be Merged
 
-- **Flutter/Dart**: Run `flutter analyze` before opening a PR. Zero warnings required.
-- **TypeScript**: Run `npm run build` in `packages/chatly-server`. Zero errors.
-- **Comments**: Write comments in plain English as you would explain to a teammate.
-  Avoid stating what the code obviously does — explain *why* it does it.
-- **No Placeholders**: Remove any TODO comments or placeholder data before merging.
-- **Secrets**: Never commit `.env` files, API keys, or signing keystores.
+- Re-adding removed features (Calculator disguise, Lucky Pulse, UDP proximity invite).
+- Adding code back to `chat_screen.dart` that belongs in the `widgets/` layer — keep message rendering in `message_bubble.dart`, input in `chat_input_bar.dart`, and painters in `chat_painters.dart`.
+- Dependencies with known high/critical CVEs.
+- Changes that require a Python/ML microservice (out of scope for this repo).
+- Any change that stores or logs plaintext messages on the server.
+- Hardcoded secrets or fallback credentials in production code paths.
 
 ---
 
 ## Reporting Bugs
 
-Open a GitHub issue using the Bug Report template. Include:
+Open a GitHub issue with the Bug Report template. Include:
+
 - Flutter/Dart version (`flutter --version`)
 - OS and device/emulator details
 - Steps to reproduce
-- Expected vs. actual behavior
+- Expected vs. actual behaviour
 - Relevant error output or stack trace
-
----
-
-## Security Vulnerabilities
-
-**Do not open a public GitHub issue for security vulnerabilities.**
-See [docs/SECURITY.md](docs/SECURITY.md) for the responsible disclosure process.
 
 ---
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the
-same [MIT License](LICENSE) that covers the project.
+By contributing, you agree that your contributions will be licensed under the same [MIT License](LICENSE) that covers the project.

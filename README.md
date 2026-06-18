@@ -23,7 +23,7 @@
 
 ## What is Chatly?
 
-Chatly is a **privacy-first messaging platform** that combines a Flutter cross-platform client with a stateless Fastify relay and a Python FastAPI machine-learning moderation microservice.
+Chatly is a **privacy-first messaging platform** that combines a Flutter cross-platform client with a stateless Fastify relay.
 
 Unlike conventional messaging apps that store message history on centralized servers, Chatly operates on a **zero-trace relay model**: messages are processed entirely in-memory and scrubbed the moment they are delivered. No message logs. No metadata retention. No surveillance surface.
 
@@ -32,36 +32,26 @@ Unlike conventional messaging apps that store message history on centralized ser
 ## Features
 
 ### Security & Privacy
-- **End-to-End Encryption** — X25519 Diffie-Hellman key exchange with AES-256-GCM symmetric encryption. Keys are generated on-device and never leave the client.
+- **Signal Protocol E2EE (1-to-1)** — Full Double Ratchet (X3DH-Lite + HKDF + AES-256-GCM). Identity keys are generated on-device with Ed25519 signing and X25519 DH. The server only ever sees opaque ciphertext.
+- **True Group E2EE** — Each group has a random AES-256 symmetric key. That key is distributed to members using ECIES (ephemeral X25519 + HKDF + AES-256-GCM key wrapping), so every member holds their own individually-encrypted copy. The server stores blobs it cannot read.
 - **Zero-Trace Relay Pipeline** — The backend holds messages transiently in RAM (or Redis with a 24-hour TTL if the recipient is offline) and deletes them immediately upon delivery.
 - **Email Verification & 2-Step Verification** — Every account goes through an email OTP gate. Optional TOTP-based second factor is available from the Security settings.
 - **Disposable Email Blocking** — Server-side blocklist prevents sign-ups from known temporary mail providers.
-- **Vault Chats** — Ephemeral on-device sessions that live entirely in RAM. Closing the session clears the memory heap.
-- **Duress / Decoy Mode** — A secondary PIN unlocks a convincing decoy interface with innocent conversations. The real inbox remains hidden.
-- **Calculator Disguise** — The app can masquerade as a working calculator. A secret code re-opens the real application.
 - **Dead Man's Switch** — Configurable auto-wipe of all local data after a period of inactivity (default: 30 days).
-- **Shake-to-Panic** — A quick device shake triggers an immediate decoy switch.
 - **Forensic Eraser** — Multi-pass overwrite of deleted messages to prevent recovery by forensic tools.
+- **Key Fingerprints / Safety Numbers** — 60-digit commutative SHA-256 fingerprint for out-of-band identity verification.
 
 ### Messaging
-- **Rich Chat Experience** — Voice messages, file attachments, reactions, read receipts, and typing indicators.
-- **Message Reactions** — Six built-in reactions with an extensible backend catalogue.
-- **Ephemeral Timers** — Per-message configurable self-destruct timers (30 s / 1 min / 5 min / 1 hr).
-- **Secure Keyboard** — Optional on-screen keyboard that blocks screenshot capture and keyloggers.
-- **AI Toxicity Moderation** — The FastAPI ML service classifies outgoing messages for toxic content using a fine-tuned BERT model (Detoxify), with a keyword regex fallback for zero-dependency deployments.
-
-### Discovery & Community
-- **Lucky Pulse** — Anonymous interest-based broadcast system. Post a message without revealing your identity. Mutual interest upgrades to a private encrypted chat.
-- **Groups** — Fully encrypted group chats. Includes **Campfire Groups** — ephemeral groups that auto-dissolve and shred their logs after a user-defined timer.
-- **P2P Mesh** — Offline messaging between nearby devices over a local UDP/TCP mesh network.
-- **Proximity Pairing** — NFC-style close-proximity connection requests visible in the chat list.
+- **1-to-1 Encrypted Chats** — Full Double Ratchet session with forward secrecy and break-in recovery. Read receipts and typing indicators included.
+- **Encrypted Group Chats** — Real AES-256-GCM group encryption. Includes **Campfire Groups** — ephemeral groups that auto-dissolve after a configurable timer.
+- **Ephemeral Timers** — Per-message configurable self-destruct timers.
+- **Offline Queue** — Messages are queued in Redis (or in-memory) and delivered when the recipient reconnects.
 
 ### Personalization
 - **15+ Themes** — Obsidian, Dracula, Cyberpunk, Deep Ocean, Emerald, and more.
-- **Chat Wallpapers** — 5+ premium wallpapers built in. Swap or set custom.
-- **Custom Fonts** — 5 curated typeface options including Inter and Roboto.
-- **Smart Moods** — Custom status markers replace intrusive "last seen" timestamps.
-- **Relationship Health Rings** — Visual engagement score rings on contact avatars based on message frequency.
+- **Chat Wallpapers** — 5+ premium wallpapers built in.
+- **Custom Fonts** — 5 curated typeface options.
+- **Smart Moods** — Custom status markers.
 
 ---
 
@@ -118,7 +108,6 @@ chatly/
 
 ### Prerequisites
 - [Node.js](https://nodejs.org) v18 or newer
-- [Python](https://python.org) 3.10 or newer
 - [Flutter SDK](https://flutter.dev/docs/get-started/install) 3.x
 
 ### 1. Clone the Repository
@@ -136,15 +125,7 @@ npm run dev
 # No database config needed — boots with in-memory fallback automatically.
 ```
 
-### 3. Start the ML Service (Optional)
-```bash
-cd packages/chatly-ml
-pip install -r requirements.txt
-python app.py
-# FastAPI starts on http://localhost:8000
-```
-
-### 4. Run the Flutter Client
+### 3. Run the Flutter Client
 ```bash
 cd apps/mobile
 flutter pub get
@@ -198,6 +179,92 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full platform-specific instruct
 | `NODE_ENV` | No | `development` or `production`. Enables production-only checks. |
 
 ---
+
+## Changelog
+
+### Code Quality & Architecture Refactor (latest)
+
+**Removed — dead code**
+- `calculator_screen.dart` deleted — leftover from the Calculator disguise feature removed in a prior release. No longer referenced anywhere.
+
+**Refactored — `chat_screen.dart` split**
+- `chat_screen.dart` was 2 582 lines mixing state, layout, and widget rendering. Split into focused files:
+  - `widgets/message_bubble.dart` — `ChatMessageBubble`, `ReactionPill`, and `kReactions` constant. Pure rendering, no state dependency.
+  - `widgets/chat_input_bar.dart` — `ChatInputBar` and `RecordingWaveform`. All interaction callbacks injected by the parent.
+  - `widgets/chat_painters.dart` — `ChatWallpaperPainter` and `MockQrCodePainter`.
+- `chat_screen.dart` now focuses on: state management, Double Ratchet session lifecycle, WebSocket event handling, and the Scaffold/build tree. Down to ~1 988 lines.
+- `ReactionPill.onTap` now reloads messages from storage directly instead of requiring a full rebuild path through `_buildReactionPill`.
+
+---
+
+### Send Logic & Bug Fixes
+
+**Fixed — critical**
+- **Offline message delivery was silently broken.** `deliverOfflineMessages` wrapped the stored payload under a `data:` key (`{ type, data: { senderId, ciphertext } }`), but the Flutter client read `payload['senderId']` and `payload['ciphertext']` at the top level. Every message sent while the recipient was offline was dropped on delivery. Fixed by spreading the stored object at the top level; the `groupId` field now also determines the event type (`message` vs `group_message`).
+- **Group messages not queued for offline members.** 1-to-1 messages were queued in Redis for offline recipients; group messages were not. Offline group members would miss messages until a full history re-fetch. Group messages are now queued under the same `msg:{username}:{uuid}` Redis key scheme and delivered on reconnect.
+
+**Improved — send reliability**
+- **`sent_ack` WebSocket event.** The server now sends a `{ type: 'sent_ack', clientId, recipientId, timestamp }` response to the sender after relaying (or queuing) a message. The Flutter client matches the ack to the optimistic message by `clientId` and flips `isSent = true` — eliminating the race condition where `isSent` was mutated before the server confirmed receipt.
+- **`isSent` is now server-confirmed.** Previously `isSent` was set to `true` immediately after `sink.add()` regardless of whether the server received it. Now it flips only when the `sent_ack` arrives. Offline/outbox messages stay in the pending (clock) state until the outbox is flushed and acknowledged.
+
+**Fixed — typing indicator**
+- Typing indicator no longer freezes when the remote user crashes or loses network. A 6-second auto-clear timer fires if no follow-up `isTyping` event arrives, matching the behaviour of Signal and WhatsApp.
+- Typing throttle is now **per-recipient** (`Map<String, DateTime>`). Previously one global timestamp caused chatting with two contacts to suppress typing indicators for both after the first send.
+- `_typingClearTimer` and `_recordingTimer` are now cancelled in `dispose()` to prevent setState-after-dispose crashes.
+
+**Improved — outbox flush**
+- The outbox flush now inserts a **550 ms gap between messages** (≈ 109 msg/min), safely under the server's 120 msg/min hard limit. Previously a user with 100+ queued messages would be disconnected immediately on reconnect.
+
+**Removed — dead code**
+- `shake_service.dart`, `wrapped_service.dart`, `p2p_mesh_service.dart`, `p2p_chat_screen.dart` deleted. These files had zero imports in the live codebase.
+
+**Added — documentation**
+- `CLAUDE.md` — project context file for Claude Code: layout, key invariants, common pitfalls, service responsibilities.
+- `CONTRIBUTING.md` — updated with setup guide, code style rules, security invariants, PR checklist, commit format, and list of changes that will not be merged.
+
+---
+
+### Friend Requests & UI/UX Overhaul
+
+**Added**
+- **"Add Contact" bottom sheet** — tapping the new FAB opens a modal sheet with a live username search, user bio preview, and a "Send Request" button. A "Scan QR" shortcut at the bottom handles QR-based pairing without requiring camera permission upfront.
+- **Modern connection request cards** — pending incoming requests now render as individual gradient cards (indigo → dark) with a glowing accept button (green gradient) and an icon-only decline button. A pill badge shows the live request count.
+- **Floating snackbars** — all connection-related feedback (sent, accepted, not found) now uses floating snackbars with rounded corners for a consistent feel.
+
+**Removed**
+- **UDP proximity / P2P mesh invite code** — `RawDatagramSocket`, `_startProximityListener`, `_handleIncomingUdpInvite`, `_broadcastProximityInvite`, `simulateProximityRequest`, and `clearProximityRequest` removed from `connection_provider.dart`. Also removed `dart:io` import.
+- **`isProximity` field** on `ConnectionInvite` — dead field removed; persisted JSON is backward-compatible (field ignored on load).
+- **`activeProximityRequest`** on `ConnectionState` — removed along with the `clearProximity` `copyWith` parameter.
+
+**Fixed**
+- `acceptInvitation` now removes the invite from the list rather than changing its status to `'accepted'`. Accepted users are immediately visible in the chat list.
+- `rejectInvitation` now removes the invite from the list rather than changing its status to `'rejected'`. Rejected invites no longer accumulate in memory/Hive.
+- `syncPendingInvitations` skips usernames already in `connections`, preventing ghost requests from re-appearing after acceptance.
+- `connection_accepted` WebSocket event now removes the outgoing invite instead of leaving it in the list with status `'accepted'`.
+
+---
+
+### Production Hardening
+
+**Added**
+- Real group E2EE via ECIES key distribution. Each group gets a random AES-256 key. When the creator makes a group or invites a member, the key is wrapped (ephemeral X25519 + HKDF-SHA256 + AES-256-GCM) under the recipient's DH identity public key and stored server-side. Members unwrap it locally with their private key — the server never sees the plaintext group key.
+- `group_keys` DB table: `(group_id, user_id, encrypted_key)` — stores ECIES-wrapped group keys, one per member.
+- `POST /api/groups/:id/keys` — distribute a wrapped group key to a member (any existing member may call this).
+- `GET /api/groups/:id/keys/my` — fetch my wrapped group key (membership verified server-side).
+- `EncryptionService.wrapGroupKey()` and `unwrapGroupKey()` — ECIES primitives in the Flutter client.
+- `ApiService.distributeGroupKey()` and `fetchGroupKey()` — client-side API wrappers.
+
+**Removed**
+- **Lucky Pulse** — anonymous broadcast feed removed from navigation and server routes.
+- **Calculator disguise** — removed from main navigation and shake trigger.
+- **Shake-to-panic** — `ShakeService` removed from main navigation.
+- **P2P Mesh tab** — removed from default navigation.
+- **Python ML microservice** — `chatly-ml` was already a stub; removed from docs.
+- **`wrapped_service.dart`** — stub file, removed from the active codebase.
+
+**Fixed**
+- Group encryption was previously broken: each device generated its own random local key, so members could not decrypt each other's messages. Fixed by the ECIES key distribution flow above.
+- `layout_provider.dart` default tab order updated to `[chats, groups, settings]`; legacy `pulse` entries are filtered out on load.
 
 ## Roadmap
 
