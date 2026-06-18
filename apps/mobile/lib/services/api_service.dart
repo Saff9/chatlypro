@@ -27,39 +27,6 @@ class ApiService {
     return Options(headers: {'Authorization': 'Bearer $t'});
   }
 
-  // ─── Lucky Pulse ────────────────────────────────────────────────────────────
-
-  /// Fetch all active pulse posts (last 7 days).
-  Future<List<Map<String, dynamic>>> getPulses() async {
-    try {
-      final opts = await _auth();
-      final res = await _dio.get('/pulse', options: opts);
-      final List list = res.data['pulses'] ?? [];
-      return list.cast<Map<String, dynamic>>();
-    } catch (e) {
-      debugPrint('getPulses error: $e');
-      return [];
-    }
-  }
-
-  /// Create a new anonymous pulse post.
-  Future<bool> createPulse({required String text, required List<String> topics}) async {
-    try {
-      final opts = await _auth();
-      await _dio.post(
-        '/pulse',
-        data: {'text': text, 'topics': topics},
-        options: opts,
-      );
-      return true;
-    } catch (e) {
-      debugPrint('createPulse error: $e');
-      return false;
-    }
-  }
-
-
-
   // ─── User Search & Profile ───────────────────────────────────────────────────
 
   /// Search users by username fragment.
@@ -105,18 +72,6 @@ class ApiService {
       return true;
     } catch (e) {
       debugPrint('updateProfile error: $e');
-      return false;
-    }
-  }
-
-  /// Request E2E connection with anonymous author of a pulse post
-  Future<bool> connectToPulseAuthor(String pulseId) async {
-    try {
-      final opts = await _auth();
-      final res = await _dio.post('/pulse/$pulseId/connect', options: opts);
-      return res.statusCode == 200 || res.statusCode == 201;
-    } catch (e) {
-      debugPrint('connectToPulseAuthor error: $e');
       return false;
     }
   }
@@ -268,6 +223,36 @@ class ApiService {
     }
   }
 
+  // ─── Group Key Distribution ─────────────────────────────────────────────────
+
+  /// Store an ECIES-wrapped group key for [username] on the server.
+  Future<bool> distributeGroupKey(String groupId, String username, String encryptedKey) async {
+    try {
+      final opts = await _auth();
+      await _dio.post(
+        '/groups/$groupId/keys',
+        data: {'username': username, 'encrypted_key': encryptedKey},
+        options: opts,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('distributeGroupKey error: $e');
+      return false;
+    }
+  }
+
+  /// Fetch the ECIES-wrapped group key for the current user.
+  Future<String?> fetchGroupKey(String groupId) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.get('/groups/$groupId/keys/my', options: opts);
+      return res.data['encrypted_key'] as String?;
+    } catch (e) {
+      debugPrint('fetchGroupKey error: $e');
+      return null;
+    }
+  }
+
   /// Request a short-lived WebSocket authentication ticket.
   Future<String?> getWsTicket() async {
     try {
@@ -276,6 +261,60 @@ class ApiService {
       return res.data['ticket'] as String?;
     } catch (e) {
       debugPrint('getWsTicket error: $e');
+      return null;
+    }
+  }
+
+  // ─── Signal Group Sender Key Distribution ───────────────────────────────────
+
+  /// Returns the list of member usernames for a group.
+  Future<List<String>> getGroupMembers(String groupId) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.get('/groups/$groupId/members', options: opts);
+      final List list = res.data['members'] ?? [];
+      return list.cast<String>();
+    } catch (e) {
+      debugPrint('getGroupMembers error: $e');
+      return [];
+    }
+  }
+
+  /// Uploads encrypted SenderKey bundles to the server for each group member.
+  /// [bundles] = [{'recipientUsername': '...', 'encryptedBundle': '...'}]
+  Future<bool> uploadGroupSenderKeyBundles(
+    String groupId,
+    List<Map<String, String>> bundles,
+  ) async {
+    try {
+      final opts = await _auth();
+      await _dio.post(
+        '/groups/$groupId/sender-key',
+        data: {'bundles': bundles},
+        options: opts,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('uploadGroupSenderKeyBundles error: $e');
+      return false;
+    }
+  }
+
+  /// Fetches the encrypted SenderKey bundle that [senderUsername] uploaded
+  /// specifically for the requesting user.  Returns null if not found.
+  Future<String?> fetchGroupSenderKey(
+      String groupId, String senderUsername) async {
+    try {
+      final opts = await _auth();
+      final res = await _dio.get(
+        '/groups/$groupId/sender-key/$senderUsername',
+        options: opts,
+      );
+      final found = res.data['found'] as bool? ?? false;
+      if (!found) return null;
+      return res.data['encryptedBundle'] as String?;
+    } catch (e) {
+      debugPrint('fetchGroupSenderKey error: $e');
       return null;
     }
   }

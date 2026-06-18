@@ -6,6 +6,49 @@ import 'package:cryptography/cryptography.dart';
 import 'package:crypto/crypto.dart' as crypto_hash; // standard hashing for safety numbers
 import 'package:hive/hive.dart';
 
+/// Signal Protocol Sender Key record for group E2EE.
+/// Each group member generates one SenderKeyRecord and distributes it to peers.
+class SenderKeyRecord {
+  final String groupId;
+  final String senderUsername;
+  /// 32-byte HMAC-SHA256 ratcheting chain key (base64).
+  String chainKeyBase64;
+  /// Ed25519 signing private key (base64).
+  String signingPrivateBase64;
+  /// Ed25519 signing public key (base64) — sent with every message.
+  String signingPublicBase64;
+  /// Monotonically increasing message counter.
+  int iteration;
+
+  SenderKeyRecord({
+    required this.groupId,
+    required this.senderUsername,
+    required this.chainKeyBase64,
+    required this.signingPrivateBase64,
+    required this.signingPublicBase64,
+    required this.iteration,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'groupId': groupId,
+        'senderUsername': senderUsername,
+        'chainKeyBase64': chainKeyBase64,
+        'signingPrivateBase64': signingPrivateBase64,
+        'signingPublicBase64': signingPublicBase64,
+        'iteration': iteration,
+      };
+
+  factory SenderKeyRecord.fromJson(Map<String, dynamic> json) =>
+      SenderKeyRecord(
+        groupId: json['groupId'] as String,
+        senderUsername: json['senderUsername'] as String,
+        chainKeyBase64: json['chainKeyBase64'] as String,
+        signingPrivateBase64: json['signingPrivateBase64'] as String,
+        signingPublicBase64: json['signingPublicBase64'] as String,
+        iteration: json['iteration'] as int,
+      );
+}
+
 /// Represents a persistent Double Ratchet session state for a contact
 class DoubleRatchetSession {
   final String peerUsername;
@@ -496,7 +539,324 @@ class EncryptionService {
     return blocks.join(' ');
   }
 
-  // ─── Legacy Cryptographic Helpers (For P2P Offline Mesh only) ───────────────
+  // ─── Group Key Distribution (ECIES) ────────────────────────────────────────
+
+  /// Wraps a raw 32-byte group key for a specific recipient using ECIES
+  /// (ephemeral X25519 + HKDF + AES-256-GCM). The returned base64 packet
+  /// can be stored server-side and only the recipient's private key can unwrap it.
+  Future<String> wrapGroupKey({
+    required List<int> groupKey,
+    required String recipientDhPublicBase64,
+  }) async {
+    // 1. Generate ephemeral X25519 keypair
+    final ek = await _x25519.newKeyPair();
+    final ekPub = await ek.extractPublicKey();
+
+    // 2. Compute X25519 shared secret
+    final recipientPub = SimplePublicKey(
+      base64Decode(recipientDhPublicBase64),
+      type: KeyPairType.x25519,
+    );
+    final shared = await _x25519.sharedSecretKey(keyPair: ek, remotePublicKey: recipientPub);
+    final sharedBytes = await shared.extractBytes();
+
+    // 3. Derive 32-byte wrapping key via HKDF
+    final hkdf = Hkdf(hmac: Hmac(Sha256()), outputLength: 32);
+    final wk = await hkdf.deriveKey(
+      secretKey: SecretKey(sharedBytes),
+      nonce: const [],
+      info: utf8.encode('ChatlyGroupKeyWrap'),
+    );
+
+    // 4. Encrypt group key with AES-256-GCM
+    final secretBox = await _cipher.encrypt(groupKey, secretKey: wk);
+
+    // 5. Return serialized packet
+    final packet = {
+      'ek_pub': base64Encode(ekPub.bytes),
+      'cipher': base64Encode(secretBox.cipherText),
+      'nonce': base64Encode(secretBox.nonce),
+      'mac': base64Encode(secretBox.mac.bytes),
+    };
+    return base64Encode(utf8.encode(jsonEncode(packet)));
+  }
+
+  /// Unwraps an ECIES-wrapped group key packet using the recipient's DH private key.
+  Future<List<int>> unwrapGroupKey({
+    required String wrappedKeyBase64,
+    required String myDhPrivateBase64,
+    required String myDhPublicBase64,
+  }) async {
+    final decoded = jsonDecode(utf8.decode(base64Decode(wrappedKeyBase64))) as Map<String, dynamic>;
+
+    final ekPubBytes = base64Decode(decoded['ek_pub'] as String);
+    final cipherText = base64Decode(decoded['cipher'] as String);
+    final nonce = base64Decode(decoded['nonce'] as String);
+    final macBytes = base64Decode(decoded['mac'] as String);
+
+    // 1. Reconstruct my DH keypair
+    final myPair = SimpleKeyPairData(
+      base64Decode(myDhPrivateBase64),
+      publicKey: SimplePublicKey(base64Decode(myDhPublicBase64), type: KeyPairType.x25519),
+      type: KeyPairType.x25519,
+    );
+
+    // 2. Compute X25519 shared secret with ephemeral public key
+    final ekPub = SimplePublicKey(ekPubBytes, type: KeyPairType.x25519);
+    final shared = await _x25519.sharedSecretKey(keyPair: myPair, remotePublicKey: ekPub);
+    final sharedBytes = await shared.extractBytes();
+
+    // 3. Derive wrapping key via HKDF
+    final hkdf = Hkdf(hmac: Hmac(Sha256()), outputLength: 32);
+    final wk = await hkdf.deriveKey(
+      secretKey: SecretKey(sharedBytes),
+      nonce: const [],
+      info: utf8.encode('ChatlyGroupKeyWrap'),
+    );
+
+    // 4. Decrypt and return raw group key bytes
+    final secretBox = SecretBox(cipherText, nonce: nonce, mac: Mac(macBytes));
+    return await _cipher.decrypt(secretBox, secretKey: wk);
+  }
+
+  // ─── Group Sender Keys (Signal Protocol — Sender Key Distribution) ──────────
+  //
+  // Each group member independently generates a SenderKeyRecord containing:
+  //   • A 32-byte HMAC-SHA256 ratcheting chain key
+  //   • An Ed25519 signing keypair to authenticate every message
+  //
+  // The SenderKey is serialised, then encrypted individually for each group
+  // member using an X25519 ECDH key agreement (see encryptSenderKeyForPeer /
+  // decryptSenderKeyFromPeer).  The server stores only opaque ciphertext.
+  //
+  // To send a group message:
+  //   1. Call encryptGroupMessage() — advances chain key, AES-256-GCM + signature.
+  //   2. Send the resulting ciphertext over the WebSocket.
+  //
+  // To receive a group message:
+  //   1. Fetch the sender's SenderKey bundle from the server (encrypted for you).
+  //   2. Call decryptSenderKeyFromPeer() to reconstruct the SenderKeyRecord.
+  //   3. Call decryptGroupMessage() to verify signature + decrypt.
+
+  /// Generates a fresh SenderKeyRecord for the caller in [groupId].
+  Future<SenderKeyRecord> generateSenderKey({
+    required String groupId,
+    required String myUsername,
+  }) async {
+    // 32-byte random chain key
+    final chainKeyPair = await _x25519.newKeyPair();
+    final chainKeyBytes = await chainKeyPair.extractPrivateKeyBytes();
+
+    // Ed25519 signing keypair
+    final signingPair = await _ed25519.newKeyPair();
+    final signingPublicBytes =
+        (await signingPair.extractPublicKey()).bytes;
+    final signingPrivateBytes =
+        await signingPair.extractPrivateKeyBytes();
+
+    return SenderKeyRecord(
+      groupId: groupId,
+      senderUsername: myUsername,
+      chainKeyBase64: base64Encode(chainKeyBytes),
+      signingPrivateBase64: base64Encode(signingPrivateBytes),
+      signingPublicBase64: base64Encode(signingPublicBytes),
+      iteration: 0,
+    );
+  }
+
+  /// Encrypts [plaintext] using the Sender Key ratchet.
+  /// Mutates [senderKey].iteration and [senderKey].chainKeyBase64.
+  Future<String> encryptGroupMessage({
+    required SenderKeyRecord senderKey,
+    required String plaintext,
+  }) async {
+    // 1. Derive message key from current chain key
+    final chainKeyBytes = base64Decode(senderKey.chainKeyBase64);
+    final hmac = Hmac(Sha256());
+    final msgKeyMac =
+        await hmac.calculateMac([0x01], secretKey: SecretKey(chainKeyBytes));
+    final nextChainKeyMac =
+        await hmac.calculateMac([0x02], secretKey: SecretKey(chainKeyBytes));
+
+    // 2. Advance chain key
+    senderKey.chainKeyBase64 = base64Encode(nextChainKeyMac.bytes);
+    final currentIteration = senderKey.iteration;
+    senderKey.iteration += 1;
+
+    // 3. AES-256-GCM encrypt
+    final secretBox = await _cipher.encrypt(
+      utf8.encode(plaintext),
+      secretKey: SecretKey(msgKeyMac.bytes),
+    );
+
+    // 4. Sign the ciphertext with the Ed25519 signing key
+    final signingPair = SimpleKeyPairData(
+      base64Decode(senderKey.signingPrivateBase64),
+      publicKey: SimplePublicKey(
+          base64Decode(senderKey.signingPublicBase64),
+          type: KeyPairType.ed25519),
+      type: KeyPairType.ed25519,
+    );
+    final signature = await _ed25519.sign(
+      secretBox.cipherText + secretBox.nonce + secretBox.mac.bytes,
+      keyPair: signingPair,
+    );
+
+    final packet = {
+      'iteration': currentIteration,
+      'signerPub': senderKey.signingPublicBase64,
+      'cipher': base64Encode(secretBox.cipherText),
+      'nonce': base64Encode(secretBox.nonce),
+      'mac': base64Encode(secretBox.mac.bytes),
+      'sig': base64Encode(signature.bytes),
+    };
+
+    return base64Encode(utf8.encode(jsonEncode(packet)));
+  }
+
+  /// Decrypts a group message encrypted with [senderKey].
+  /// Advances [senderKey] chain to the packet's iteration.
+  Future<String> decryptGroupMessage({
+    required SenderKeyRecord senderKey,
+    required String encryptedPacketBase64,
+  }) async {
+    final json = jsonDecode(utf8.decode(base64Decode(encryptedPacketBase64)))
+        as Map<String, dynamic>;
+
+    final packetIteration = json['iteration'] as int;
+    final signerPubBase64 = json['signerPub'] as String;
+    final cipherBytes = base64Decode(json['cipher'] as String);
+    final nonceBytes = base64Decode(json['nonce'] as String);
+    final macBytes = base64Decode(json['mac'] as String);
+    final sigBytes = base64Decode(json['sig'] as String);
+
+    // 1. Verify Ed25519 signature
+    if (signerPubBase64 != senderKey.signingPublicBase64) {
+      throw Exception(
+          '[Group E2EE] Signing key mismatch — possible impersonation.');
+    }
+    final signerPub = SimplePublicKey(base64Decode(signerPubBase64),
+        type: KeyPairType.ed25519);
+    final sig = Signature(sigBytes, publicKey: signerPub);
+    final valid =
+        await _ed25519.verify(cipherBytes + nonceBytes + macBytes, signature: sig);
+    if (!valid) {
+      throw Exception('[Group E2EE] Signature verification failed.');
+    }
+
+    // 2. Advance chain to packetIteration if behind
+    final hmac = Hmac(Sha256());
+    while (senderKey.iteration <= packetIteration) {
+      final chainKeyBytes = base64Decode(senderKey.chainKeyBase64);
+      final nextChainKeyMac = await hmac.calculateMac(
+          [0x02], secretKey: SecretKey(chainKeyBytes));
+      if (senderKey.iteration == packetIteration) {
+        // Derive message key at this iteration before advancing
+        final msgKeyMac = await hmac.calculateMac(
+            [0x01], secretKey: SecretKey(chainKeyBytes));
+        senderKey.chainKeyBase64 = base64Encode(nextChainKeyMac.bytes);
+        senderKey.iteration += 1;
+
+        final secretBox = SecretBox(cipherBytes,
+            nonce: nonceBytes, mac: Mac(macBytes));
+        final cleartextBytes = await _cipher.decrypt(
+          secretBox,
+          secretKey: SecretKey(msgKeyMac.bytes),
+        );
+        return utf8.decode(cleartextBytes);
+      }
+      senderKey.chainKeyBase64 = base64Encode(nextChainKeyMac.bytes);
+      senderKey.iteration += 1;
+    }
+
+    throw Exception(
+        '[Group E2EE] Message iteration $packetIteration already consumed '
+        '(current: ${senderKey.iteration}).');
+  }
+
+  /// Encrypts a [SenderKeyRecord] for distribution to a peer.
+  /// Uses ephemeral X25519 DH against the peer's [peerDhIdentityPublicBase64].
+  Future<String> encryptSenderKeyForPeer({
+    required SenderKeyRecord senderKey,
+    required String peerDhIdentityPublicBase64,
+  }) async {
+    // 1. Ephemeral X25519 keypair
+    final ephPair = await _x25519.newKeyPair();
+    final ephPub = await ephPair.extractPublicKey();
+
+    // 2. DH shared secret with peer's identity DH key
+    final peerPub = SimplePublicKey(
+        base64Decode(peerDhIdentityPublicBase64),
+        type: KeyPairType.x25519);
+    final sharedSecret =
+        await _x25519.sharedSecretKey(keyPair: ephPair, remotePublicKey: peerPub);
+
+    // 3. HKDF → 32-byte encryption key
+    final hkdf = Hkdf(hmac: Hmac(Sha256()), outputLength: 32);
+    final encKey = await hkdf.deriveKey(
+      secretKey: sharedSecret,
+      nonce: utf8.encode('ChatlyGroupSenderKeyDist'),
+      info: utf8.encode('sender-key-v1'),
+    );
+
+    // 4. AES-256-GCM encrypt the serialised sender key
+    final payload = utf8.encode(jsonEncode(senderKey.toJson()));
+    final secretBox = await _cipher.encrypt(payload, secretKey: encKey);
+
+    final bundle = {
+      'ephPub': base64Encode(ephPub.bytes),
+      'cipher': base64Encode(secretBox.cipherText),
+      'nonce': base64Encode(secretBox.nonce),
+      'mac': base64Encode(secretBox.mac.bytes),
+    };
+    return base64Encode(utf8.encode(jsonEncode(bundle)));
+  }
+
+  /// Decrypts a SenderKey bundle received from the server.
+  /// Uses [myDhIdentityPrivateBase64] + [myDhIdentityPublicBase64] to recompute DH.
+  Future<SenderKeyRecord> decryptSenderKeyFromPeer({
+    required String encryptedBundleBase64,
+    required String myDhIdentityPrivateBase64,
+    required String myDhIdentityPublicBase64,
+  }) async {
+    final bundle = jsonDecode(utf8.decode(base64Decode(encryptedBundleBase64)))
+        as Map<String, dynamic>;
+
+    final ephPub = SimplePublicKey(
+        base64Decode(bundle['ephPub'] as String),
+        type: KeyPairType.x25519);
+
+    // Reconstruct my DH identity keypair
+    final myPair = SimpleKeyPairData(
+      base64Decode(myDhIdentityPrivateBase64),
+      publicKey: SimplePublicKey(base64Decode(myDhIdentityPublicBase64),
+          type: KeyPairType.x25519),
+      type: KeyPairType.x25519,
+    );
+
+    final sharedSecret =
+        await _x25519.sharedSecretKey(keyPair: myPair, remotePublicKey: ephPub);
+
+    final hkdf = Hkdf(hmac: Hmac(Sha256()), outputLength: 32);
+    final encKey = await hkdf.deriveKey(
+      secretKey: sharedSecret,
+      nonce: utf8.encode('ChatlyGroupSenderKeyDist'),
+      info: utf8.encode('sender-key-v1'),
+    );
+
+    final secretBox = SecretBox(
+      base64Decode(bundle['cipher'] as String),
+      nonce: base64Decode(bundle['nonce'] as String),
+      mac: Mac(base64Decode(bundle['mac'] as String)),
+    );
+
+    final payload = await _cipher.decrypt(secretBox, secretKey: encKey);
+    final recordJson =
+        jsonDecode(utf8.decode(payload)) as Map<String, dynamic>;
+    return SenderKeyRecord.fromJson(recordJson);
+  }
+
+  // ─── General-Purpose AES-256-GCM Helpers ─────────────────────────────────
 
   /// Generates a new X25519 keypair
   Future<SimpleKeyPair> generateKeyPair() async {

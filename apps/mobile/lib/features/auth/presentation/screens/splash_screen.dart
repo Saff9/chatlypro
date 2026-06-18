@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:hive/hive.dart';
 import 'welcome_screen.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../navigation/main_navigation.dart';

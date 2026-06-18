@@ -9,6 +9,15 @@ import 'api_service.dart';
 
 enum SocketConnectionState { disconnected, connecting, connected, reconnecting }
 
+/// Singleton WebSocket service that manages the persistent connection to the
+/// Chatly relay server.
+///
+/// Responsibilities:
+///   - Authenticate via short-lived single-use ticket (falls back to JWT in dev)
+///   - Reconnect automatically with exponential back-off (1s → 2s → 4s … 30s cap)
+///   - Adapt keep-alive ping frequency to network type (15 s on Wi-Fi, 60 s on mobile)
+///   - Queue outbound messages in a local Hive outbox when offline; flush on reconnect
+///   - Expose [messageStream] for any subscriber (chat screen, connection provider, …)
 class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
   factory WebSocketService() => _instance;
@@ -18,9 +27,11 @@ class WebSocketService {
 
   WebSocketChannel? _channel;
   SocketConnectionState _connectionState = SocketConnectionState.disconnected;
-  
-  final StreamController<Map<String, dynamic>> _messageStreamController = StreamController<Map<String, dynamic>>.broadcast();
-  final StreamController<SocketConnectionState> _stateStreamController = StreamController<SocketConnectionState>.broadcast();
+
+  final StreamController<Map<String, dynamic>> _messageStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<SocketConnectionState> _stateStreamController =
+      StreamController<SocketConnectionState>.broadcast();
 
   String? _currentToken;
   String? _currentUrl;
@@ -29,66 +40,68 @@ class WebSocketService {
   Timer? _reconnectTimer;
   Timer? _pingTimer;
 
-  // Bandwidth Adaptation Settings
-  int _pingIntervalSeconds = 15; // Default: 15 seconds on fast links
-  DateTime? _lastTypingSent;
+  // Adaptive ping: 15 s on Wi-Fi/Ethernet, 60 s on cellular to save data
+  int _pingIntervalSeconds = 15;
 
-  // Public Getters
+  // Per-recipient typing throttle — prevents flooding on slow links
+  // Key: recipientId, Value: time of last "isTyping: true" event sent
+  final Map<String, DateTime> _lastTypingSentMap = {};
+
+  // Public API
   Stream<Map<String, dynamic>> get messageStream => _messageStreamController.stream;
   Stream<SocketConnectionState> get stateStream => _stateStreamController.stream;
   SocketConnectionState get connectionState => _connectionState;
 
-  void _updateState(SocketConnectionState state) {
-    _connectionState = state;
-    _stateStreamController.add(state);
-    
-    if (state == SocketConnectionState.connected) {
+  void _updateState(SocketConnectionState newState) {
+    _connectionState = newState;
+    _stateStreamController.add(newState);
+
+    if (newState == SocketConnectionState.connected) {
       _startAdaptivePing();
-      _flushOutboxQueue(); // Sync local drafts automatically on link-up
+      _flushOutboxQueue();
     } else {
       _stopPingTimer();
     }
 
-    if (kDebugMode) {
-      print('WebSocket Connection State: $state');
-    }
+    if (kDebugMode) debugPrint('[WS] State → $newState');
   }
 
-  /// Initialize and connect WebSocket channel
+  /// Connect (or reconnect) to the WebSocket relay.
+  ///
+  /// Fetches a short-lived single-use ticket first. In production this is the
+  /// only accepted auth method; in dev the raw JWT is allowed as fallback.
   void connect({required String url, required String token}) async {
     _currentToken = token;
     _currentUrl = url;
     _shouldReconnect = true;
 
-    if (_connectionState == SocketConnectionState.connected || 
+    if (_connectionState == SocketConnectionState.connected ||
         _connectionState == SocketConnectionState.connecting) {
       return;
     }
 
     _updateState(SocketConnectionState.connecting);
 
-    // Fetch short-lived single-use connection ticket
     final ticket = await ApiService().getWsTicket();
-    final String query = ticket != null ? '?ticket=$ticket' : '?token=$token';
+    final String query =
+        ticket != null ? '?ticket=$ticket' : '?token=$token';
     final wsUri = Uri.parse('$url/ws/chat$query');
 
     try {
       _channel = IOWebSocketChannel.connect(
         wsUri,
-        headers: {
-          'Authorization': 'Bearer $token',
-        },
+        headers: {'Authorization': 'Bearer $token'},
       );
-      
+
       _channel!.stream.listen(
         (message) {
           _reconnectAttempts = 0;
           _updateState(SocketConnectionState.connected);
           try {
-            final Map<String, dynamic> parsedData = jsonDecode(message);
-            _messageStreamController.add(parsedData);
+            final Map<String, dynamic> parsed = jsonDecode(message as String);
+            _messageStreamController.add(parsed);
           } catch (e) {
-            if (kDebugMode) print('Error parsing WebSocket data: $e');
+            if (kDebugMode) debugPrint('[WS] Parse error: $e');
           }
         },
         onDone: () {
@@ -96,139 +109,166 @@ class WebSocketService {
           _handleDisconnect();
         },
         onError: (error) {
+          if (kDebugMode) debugPrint('[WS] Stream error: $error');
           _updateState(SocketConnectionState.disconnected);
-          if (kDebugMode) print('WebSocket stream error: $error');
           _handleDisconnect();
         },
       );
     } catch (e) {
+      if (kDebugMode) debugPrint('[WS] Connection failed: $e');
       _updateState(SocketConnectionState.disconnected);
-      if (kDebugMode) print('Error establishing WebSocket connection: $e');
       _handleDisconnect();
     }
   }
 
-  /// Send message payload. Queues in local Hive outbox if connection is unavailable.
-  Future<bool> sendMessage({required String recipientId, required String ciphertext}) async {
+  /// Send an encrypted 1-to-1 message.
+  ///
+  /// If offline, the message is persisted in the Hive outbox and this method
+  /// returns `false`. The outbox is automatically flushed when the connection
+  /// is restored. [clientId] is echoed back in the server's `sent_ack` event
+  /// so the caller can flip [MessageData.isSent] reliably.
+  Future<bool> sendMessage({
+    required String recipientId,
+    required String ciphertext,
+    String? clientId,
+  }) async {
     final outboxBox = await Hive.openBox('outbox');
-    
+
     final payload = {
       'recipientId': recipientId,
       'ciphertext': ciphertext,
+      'clientId': clientId,
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     };
 
-    if (_connectionState != SocketConnectionState.connected || _channel == null) {
-      // 0 Data or low link: Save in local outbox out-of-the-box
+    if (_connectionState != SocketConnectionState.connected ||
+        _channel == null) {
       final messageId = DateTime.now().microsecondsSinceEpoch.toString();
       await outboxBox.put(messageId, jsonEncode(payload));
-      if (kDebugMode) {
-        print('Offline: Encrypted message packet queued in Hive Outbox.');
-      }
-      return false; // Renders as pending (clock) in UI
+      if (kDebugMode) debugPrint('[WS] Offline — message queued in outbox');
+      return false;
     }
 
     try {
-      final messagePayload = {
+      _channel!.sink.add(jsonEncode({
         'type': 'message',
         'recipientId': recipientId,
         'ciphertext': ciphertext,
-      };
-      _channel!.sink.add(jsonEncode(messagePayload));
-      return true; // Sent successfully
+        if (clientId != null) 'clientId': clientId,
+      }));
+      return true;
     } catch (e) {
-      // Send failed, fallback to outbox
       final messageId = DateTime.now().microsecondsSinceEpoch.toString();
       await outboxBox.put(messageId, jsonEncode(payload));
       return false;
     }
   }
 
-  Future<bool> sendGroupMessage({required String groupId, required String ciphertext}) async {
-    if (_connectionState != SocketConnectionState.connected || _channel == null) {
+  /// Send an encrypted group message.
+  Future<bool> sendGroupMessage({
+    required String groupId,
+    required String ciphertext,
+  }) async {
+    if (_connectionState != SocketConnectionState.connected ||
+        _channel == null) {
       return false;
     }
     try {
-      final payload = {
+      _channel!.sink.add(jsonEncode({
         'type': 'group_message',
         'groupId': groupId,
         'ciphertext': ciphertext,
-      };
-      _channel!.sink.add(jsonEncode(payload));
+      }));
       return true;
     } catch (_) {
       return false;
     }
   }
 
-  /// Automatically flushes queued outbox messages once connection is established
+  /// Drain the local outbox, respecting the server's 120 msg/min rate limit.
+  ///
+  /// Inserts a 550 ms gap between each send (≈ 109 msg/min), leaving headroom
+  /// for concurrent typing events and pings. Stops immediately if the
+  /// connection drops mid-flush.
   Future<void> _flushOutboxQueue() async {
     final outboxBox = await Hive.openBox('outbox');
     if (outboxBox.isEmpty) return;
 
     if (kDebugMode) {
-      print('Flushing ${outboxBox.length} queued messages from outbox...');
+      debugPrint('[WS] Flushing ${outboxBox.length} queued messages…');
     }
 
     final keys = List<String>.from(outboxBox.keys);
     for (final key in keys) {
       if (_connectionState != SocketConnectionState.connected) break;
-      
+
       final value = outboxBox.get(key);
       if (value != null) {
         try {
-          final data = jsonDecode(value);
-          final messagePayload = {
+          final data = jsonDecode(value as String) as Map<String, dynamic>;
+          _channel!.sink.add(jsonEncode({
             'type': 'message',
             'recipientId': data['recipientId'],
             'ciphertext': data['ciphertext'],
-          };
-          _channel!.sink.add(jsonEncode(messagePayload));
-          await outboxBox.delete(key); // Remove from queue (Zero trace)
+            if (data['clientId'] != null) 'clientId': data['clientId'],
+          }));
+          await outboxBox.delete(key);
+          // Rate-limit: ~109 messages/min, safely under the 120 msg/min cap
+          await Future<void>.delayed(const Duration(milliseconds: 550));
         } catch (e) {
-          if (kDebugMode) print('Failed to sync outbox message: $e');
+          if (kDebugMode) debugPrint('[WS] Outbox flush error: $e');
         }
       }
     }
   }
 
-  /// Send real-time typing indicators with throttling to save 2G data
-  void sendTypingStatus({required String recipientId, required bool isTyping}) {
-    if (_connectionState != SocketConnectionState.connected || _channel == null) return;
-
-    // Rate-limiting typing indicators to once per 8 seconds to prevent network bloat on 2G
-    final now = DateTime.now();
-    if (_lastTypingSent != null && now.difference(_lastTypingSent!).inSeconds < 8 && isTyping) {
+  /// Send a typing indicator for [recipientId].
+  ///
+  /// "isTyping: true" events are throttled to once every 8 seconds **per
+  /// recipient** to prevent network churn on slow links. "isTyping: false"
+  /// events are always sent immediately to clear the indicator without delay.
+  void sendTypingStatus({
+    required String recipientId,
+    required bool isTyping,
+  }) {
+    if (_connectionState != SocketConnectionState.connected ||
+        _channel == null) {
       return;
     }
 
-    _lastTypingSent = now;
-
-    final payload = {
-      'type': 'typing',
-      'recipientId': recipientId,
-      'isTyping': isTyping,
-    };
+    if (isTyping) {
+      final now = DateTime.now();
+      final last = _lastTypingSentMap[recipientId];
+      if (last != null && now.difference(last).inSeconds < 8) return;
+      _lastTypingSentMap[recipientId] = now;
+    }
 
     try {
-      _channel!.sink.add(jsonEncode(payload));
+      _channel!.sink.add(jsonEncode({
+        'type': 'typing',
+        'recipientId': recipientId,
+        'isTyping': isTyping,
+      }));
     } catch (e) {
-      if (kDebugMode) print('Failed to send typing indicator: $e');
+      if (kDebugMode) debugPrint('[WS] Typing send error: $e');
     }
   }
 
-  /// Starts adaptive keep-alive pings based on current network bandwidth profile
   void _startAdaptivePing() {
     _stopPingTimer();
-    _pingTimer = Timer.periodic(Duration(seconds: _pingIntervalSeconds), (timer) {
-      if (_connectionState == SocketConnectionState.connected && _channel != null) {
-        try {
-          _channel!.sink.add(jsonEncode({'type': 'ping'}));
-        } catch (e) {
-          if (kDebugMode) print('Ping error: $e');
+    _pingTimer = Timer.periodic(
+      Duration(seconds: _pingIntervalSeconds),
+      (_) {
+        if (_connectionState == SocketConnectionState.connected &&
+            _channel != null) {
+          try {
+            _channel!.sink.add(jsonEncode({'type': 'ping'}));
+          } catch (e) {
+            if (kDebugMode) debugPrint('[WS] Ping error: $e');
+          }
         }
-      }
-    });
+      },
+    );
   }
 
   void _stopPingTimer() {
@@ -236,7 +276,7 @@ class WebSocketService {
     _pingTimer = null;
   }
 
-  /// Disconnect and clean connections
+  /// Cleanly disconnect and stop all reconnect timers.
   void disconnect() {
     _shouldReconnect = false;
     _reconnectTimer?.cancel();
@@ -245,57 +285,57 @@ class WebSocketService {
     _updateState(SocketConnectionState.disconnected);
   }
 
-  /// Handle auto-reconnections with exponential backoff
+  /// Exponential back-off reconnect: 1 s, 2 s, 4 s, 8 s, 16 s, 30 s (cap).
   void _handleDisconnect() {
     if (!_shouldReconnect) return;
 
     _reconnectTimer?.cancel();
-    
-    final delaySeconds = (_reconnectAttempts < 6) ? (1 << _reconnectAttempts) : 30;
+    final delaySecs = _reconnectAttempts < 6 ? (1 << _reconnectAttempts) : 30;
     _reconnectAttempts++;
-
     _updateState(SocketConnectionState.reconnecting);
 
-    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+    _reconnectTimer = Timer(Duration(seconds: delaySecs), () {
       if (_currentToken != null && _currentUrl != null) {
         if (kDebugMode) {
-          print('Reconnecting to server (Attempt $_reconnectAttempts, Delay ${delaySeconds}s)...');
+          debugPrint(
+            '[WS] Reconnecting (attempt $_reconnectAttempts, delay ${delaySecs}s)…',
+          );
         }
         connect(url: _currentUrl!, token: _currentToken!);
       }
     });
   }
 
-  /// Network status check for quick reconnection and ping-rate adaptation
+  /// Adapt ping frequency and trigger a quick reconnect when the network type
+  /// changes (e.g. going from airplane mode back to Wi-Fi).
   void _monitorNetworkConnectivity() {
     Connectivity().onConnectivityChanged.listen((dynamic event) {
       ConnectivityResult result;
       if (event is List<ConnectivityResult>) {
-        result = event.isNotEmpty ? event.first : ConnectivityResult.none;
+        result =
+            event.isNotEmpty ? event.first : ConnectivityResult.none;
       } else if (event is ConnectivityResult) {
         result = event;
       } else {
         result = ConnectivityResult.none;
       }
 
-      // Adaptive heartbeats: Slow down pings on mobile connections to preserve data
+      // Use slower heartbeats on cellular to conserve mobile data
       if (result == ConnectivityResult.mobile) {
-        _pingIntervalSeconds = 60; // 2G/Mobile gets 60-second pings to save data
-        if (_connectionState == SocketConnectionState.connected) {
-          _startAdaptivePing(); // Refresh ping scheduler
-        }
+        _pingIntervalSeconds = 60;
       } else {
-        _pingIntervalSeconds = 15; // Fast connections use 15s heartbeats
-        if (_connectionState == SocketConnectionState.connected) {
-          _startAdaptivePing();
-        }
+        _pingIntervalSeconds = 15;
       }
 
-      if (result != ConnectivityResult.none && 
-          _connectionState == SocketConnectionState.disconnected && 
-          _currentToken != null && 
+      if (_connectionState == SocketConnectionState.connected) {
+        _startAdaptivePing(); // refresh the timer with the new interval
+      }
+
+      if (result != ConnectivityResult.none &&
+          _connectionState == SocketConnectionState.disconnected &&
+          _currentToken != null &&
           _currentUrl != null) {
-        if (kDebugMode) print('Network restored. Re-establishing connection...');
+        if (kDebugMode) debugPrint('[WS] Network restored — reconnecting…');
         connect(url: _currentUrl!, token: _currentToken!);
       }
     });

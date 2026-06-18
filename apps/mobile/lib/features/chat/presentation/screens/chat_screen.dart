@@ -1932,8 +1932,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: CustomPaint(
-                painter: const MockQrCodePainter(),
+              child: const CustomPaint(
+                painter: MockQrCodePainter(),
               ),
             ),
             const SizedBox(height: 20),
