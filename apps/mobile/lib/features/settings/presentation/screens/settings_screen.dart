@@ -1643,7 +1643,7 @@ class SettingsScreen extends ConsumerWidget {
                                   title: Text('@${invite.username}', style: const TextStyle(color: Colors.white, fontSize: 14)),
                                   subtitle: Text(
                                     isIncoming
-                                        ? (invite.isProximity ? 'Incoming Proximity Request' : 'Incoming Invitation')
+                                        ? 'Incoming Invitation'
                                         : 'Outgoing Invite • ${invite.status}',
                                     style: const TextStyle(color: Colors.white54, fontSize: 10),
                                   ),
