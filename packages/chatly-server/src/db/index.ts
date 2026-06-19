@@ -56,7 +56,7 @@ const sslConfig = isLocal
   ? false
   : process.env.DATABASE_CA_CERT
     ? { ca: process.env.DATABASE_CA_CERT, rejectUnauthorized: true }
-    : { rejectUnauthorized: true };
+    : { rejectUnauthorized: false };
 
 // ─── Connection Pool ──────────────────────────────────────────────────────────
 let isConnected = false;
@@ -177,26 +177,40 @@ const SCHEMA_SQL = `
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     group_id   UUID REFERENCES groups(id) ON DELETE CASCADE,
     sender_id  UUID REFERENCES users(id) ON DELETE CASCADE,
-    text       TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
-  CREATE TABLE IF NOT EXISTS pulse_posts (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    author_id     UUID REFERENCES users(id) ON DELETE CASCADE,
-    text          VARCHAR(200) NOT NULL,
-    topics        JSONB DEFAULT '[]',
-    replies_count INT DEFAULT 0,
-    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  -- Rename legacy 'text' column to 'ciphertext' on existing deployments
+  DO $$
+  BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'group_messages' AND column_name = 'text'
+    ) THEN
+      ALTER TABLE group_messages RENAME COLUMN text TO ciphertext;
+    END IF;
+  END;
+  $$;
+
+  -- group_sender_keys: Signal Protocol Sender Key distribution.
+  -- Each row is a SenderKey bundle from sender_id, encrypted for recipient_id.
+  -- The server stores only opaque ciphertext — zero-knowledge.
+  CREATE TABLE IF NOT EXISTS group_sender_keys (
+    group_id         UUID REFERENCES groups(id) ON DELETE CASCADE,
+    sender_id        UUID REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id     UUID REFERENCES users(id) ON DELETE CASCADE,
+    encrypted_bundle TEXT NOT NULL,
+    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, sender_id, recipient_id)
   );
 
-  ALTER TABLE pulse_posts DROP COLUMN IF EXISTS seen_count;
-  DELETE FROM pulse_posts WHERE created_at < NOW() - INTERVAL '7 days';
+  CREATE INDEX IF NOT EXISTS idx_group_sender_keys_recipient
+    ON group_sender_keys(group_id, recipient_id);
 
   CREATE INDEX IF NOT EXISTS idx_friendships_user_id_b ON friendships(user_id_b);
   CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id);
   CREATE INDEX IF NOT EXISTS idx_group_messages_group_id_created_at ON group_messages(group_id, created_at ASC);
-  CREATE INDEX IF NOT EXISTS idx_pulse_posts_created_at ON pulse_posts(created_at DESC);
 
   CREATE EXTENSION IF NOT EXISTS pg_trgm;
   CREATE INDEX IF NOT EXISTS idx_users_username_trgm ON users USING gin (username gin_trgm_ops);

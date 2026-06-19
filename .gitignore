@@ -43,6 +43,7 @@ venv/
 *.p12
 *.pfx
 key.properties
+keystore.properties
 release-key.properties
 google-services.json
 GoogleService-Info.plist

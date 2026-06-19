@@ -3,135 +3,6 @@ import crypto from 'crypto';
 import { pool } from '../db';
 import { verifyToken } from './auth';
 import { activeConnections, safeSend } from '../sockets/chat';
-import { WebSocket } from 'ws';
-
-// ─── Pulse Routes ─────────────────────────────────────────────────────────────
-export async function pulseRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
-
-  // GET /api/pulse — newest first, max 50, within 7 days
-  fastify.get('/', async (request, reply) => {
-    try {
-      const result = await pool.query(
-        `SELECT id, text, topics, replies_count, created_at
-         FROM pulse_posts
-         WHERE created_at > NOW() - INTERVAL '7 days'
-         ORDER BY created_at DESC
-         LIMIT 50`
-      );
-      return reply.send({ pulses: result.rows });
-    } catch (err: any) {
-      fastify.log.error(err, 'GET /pulse: DB error');
-      return reply.code(503).send({ error: 'Service temporarily unavailable' });
-    }
-  });
-
-  // POST /api/pulse — create anonymous pulse (auth required)
-  fastify.post('/', async (request, reply) => {
-    const user = verifyToken(request.headers.authorization);
-    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
-
-    const { text, topics } = request.body as any;
-    const cleanText = typeof text === 'string' ? text.trim() : '';
-
-    if (!cleanText) {
-      return reply.code(400).send({ error: 'Pulse text is required' });
-    }
-    if (cleanText.length > 200) {
-      return reply.code(400).send({ error: 'Pulse text must be 200 characters or fewer' });
-    }
-
-    const topicsArray: string[] = Array.isArray(topics)
-      ? topics.map((t: any) => String(t).trim()).filter(Boolean).slice(0, 5)
-      : typeof topics === 'string'
-        ? topics.split(' ').map(t => t.trim()).filter(Boolean).slice(0, 5)
-        : [];
-
-    try {
-      const checkLimit = await pool.query(
-        "SELECT COUNT(*) FROM pulse_posts WHERE author_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
-        [user.userId]
-      );
-      const count = parseInt(checkLimit.rows[0].count, 10);
-      if (count >= 3) {
-        return reply.code(429).send({ error: 'Pulse broadcast limit reached. Maximum 3 posts per 24 hours.' });
-      }
-
-      const newId = crypto.randomUUID();
-      const result = await pool.query(
-        `INSERT INTO pulse_posts (id, author_id, text, topics, replies_count)
-         VALUES ($1, $2, $3, $4, 0)
-         RETURNING id, text, topics, replies_count, created_at`,
-        [newId, user.userId, cleanText, JSON.stringify(topicsArray)]
-      );
-      return reply.code(201).send({ pulse: result.rows[0] });
-    } catch (err: any) {
-      fastify.log.error(err, 'POST /pulse: DB error');
-      return reply.code(503).send({ error: 'Service temporarily unavailable' });
-    }
-  });
-
-  // POST /api/pulse/:id/connect — request connection with the anonymous author (auth required)
-  fastify.post('/:id/connect', async (request, reply) => {
-    const user = verifyToken(request.headers.authorization);
-    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
-
-    const { id } = request.params as any;
-
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!UUID_RE.test(id)) {
-      return reply.code(400).send({ error: 'Invalid id' });
-    }
-
-    try {
-      const postRes = await pool.query('SELECT author_id FROM pulse_posts WHERE id = $1', [id]);
-      if (postRes.rows.length === 0) {
-        return reply.code(404).send({ error: 'Pulse post not found' });
-      }
-      const authorId = postRes.rows[0].author_id;
-
-      if (authorId === user.userId) {
-        return reply.code(400).send({ error: 'You cannot connect with yourself' });
-      }
-
-      // Check if they are already connected
-      const checkFriend = await pool.query(
-        `SELECT 1 FROM friendships
-         WHERE (user_id_a = $1 AND user_id_b = $2)
-            OR (user_id_a = $2 AND user_id_b = $1)`,
-        [user.userId, authorId]
-      );
-
-      if (checkFriend.rows.length > 0) {
-        return reply.send({ success: true, message: 'Connection already exists or is pending' });
-      }
-
-      // Create a pending friendship
-      await pool.query(
-        `INSERT INTO friendships (user_id_a, user_id_b, status)
-         VALUES ($1, $2, 'pending')`,
-        [user.userId, authorId]
-      );
-
-      // Try to notify the author via socket if online!
-      const authorRes = await pool.query('SELECT username FROM users WHERE id = $1', [authorId]);
-      if (authorRes.rows.length > 0) {
-        const authorUsername = authorRes.rows[0].username;
-        const authorSocket = activeConnections.get(authorUsername);
-        if (authorSocket) {
-          safeSend(authorSocket, JSON.stringify({
-            type: 'incoming_connection_request',
-            fromUsername: user.username,
-          }));
-        }
-      }
-
-      return reply.send({ success: true, message: 'Request dispatched' });
-    } catch (err: any) {
-      fastify.log.error(err, 'POST /pulse/:id/connect: DB error');
-      return reply.code(500).send({ error: 'Failed to send connection request' });
-    }
-  });
-}
 
 // ─── User Routes ──────────────────────────────────────────────────────────────
 export async function userRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions) {
@@ -552,6 +423,91 @@ export async function groupRoutes(fastify: FastifyInstance, _options: FastifyPlu
     }
   });
 
+  // POST /api/groups/:id/keys — Store an ECIES-wrapped group key for a specific member.
+  // Caller must be a group member. Used by the group creator (or any member) to share
+  // the plaintext group key with a new invitee encrypted under their DH identity key.
+  fastify.post('/:id/keys', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id } = request.params as any;
+    const { username, encrypted_key } = request.body as any;
+
+    if (!username || typeof username !== 'string' || !encrypted_key || typeof encrypted_key !== 'string') {
+      return reply.code(400).send({ error: 'username and encrypted_key are required' });
+    }
+    if (encrypted_key.length > 4096) {
+      return reply.code(400).send({ error: 'encrypted_key too large' });
+    }
+
+    try {
+      // Verify caller is a group member
+      const callerRes = await pool.query(
+        'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+      if (callerRes.rows.length === 0) {
+        return reply.code(403).send({ error: 'Forbidden: Not a group member' });
+      }
+
+      // Resolve target user
+      const targetRes = await pool.query(
+        'SELECT id FROM users WHERE LOWER(username) = $1',
+        [username.toLowerCase().trim()]
+      );
+      if (targetRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Target user not found' });
+      }
+      const targetId = targetRes.rows[0].id;
+
+      await pool.query(
+        `INSERT INTO group_keys (group_id, user_id, encrypted_key, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (group_id, user_id)
+         DO UPDATE SET encrypted_key = $3, updated_at = NOW()`,
+        [id, targetId, encrypted_key]
+      );
+
+      return reply.send({ success: true });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /groups/:id/keys: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  // GET /api/groups/:id/keys/my — Retrieve the ECIES-wrapped group key for the requesting user.
+  fastify.get('/:id/keys/my', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id } = request.params as any;
+
+    try {
+      // Verify membership
+      const memberRes = await pool.query(
+        'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+      if (memberRes.rows.length === 0) {
+        return reply.code(403).send({ error: 'Forbidden: Not a group member' });
+      }
+
+      const keyRes = await pool.query(
+        'SELECT encrypted_key FROM group_keys WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+
+      if (keyRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Group key not available. Ask a group member to re-invite you.' });
+      }
+
+      return reply.send({ encrypted_key: keyRes.rows[0].encrypted_key });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /groups/:id/keys/my: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
   fastify.get('/:id/messages', async (request, reply) => {
     const user = verifyToken(request.headers.authorization);
     if (!user) return reply.code(401).send({ error: 'Unauthorized' });
@@ -568,7 +524,7 @@ export async function groupRoutes(fastify: FastifyInstance, _options: FastifyPlu
       }
 
       const msgs = await pool.query(
-        `SELECT gm.id, u.username as sender, gm.text, gm.created_at
+        `SELECT gm.id, u.username as sender, gm.ciphertext, gm.created_at
          FROM group_messages gm
          JOIN users u ON gm.sender_id = u.id
          WHERE gm.group_id = $1
@@ -579,6 +535,144 @@ export async function groupRoutes(fastify: FastifyInstance, _options: FastifyPlu
       return reply.send({ messages: msgs.rows });
     } catch (err: any) {
       fastify.log.error(err, 'GET /groups/:id/messages: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  // GET /api/groups/:id/members — list usernames for a group (auth + membership required)
+  fastify.get('/:id/members', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id } = request.params as any;
+    try {
+      const memberRes = await pool.query(
+        'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+      if (memberRes.rows.length === 0) {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+      const result = await pool.query(
+        `SELECT u.username FROM group_members gm
+         JOIN users u ON gm.user_id = u.id
+         WHERE gm.group_id = $1`,
+        [id]
+      );
+      return reply.send({ members: result.rows.map((r: any) => r.username) });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /groups/:id/members: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  // ─── Signal Sender Key Distribution ────────────────────────────────────────
+  // POST /api/groups/:id/sender-key — upload encrypted sender key bundles
+  // Body: { bundles: [{ recipientUsername: string, encryptedBundle: string }] }
+  // Each bundle is the caller's SenderKey encrypted for a specific group member.
+  // The server stores opaque ciphertext and cannot read any bundle.
+  fastify.post('/:id/sender-key', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id } = request.params as any;
+    const { bundles } = request.body as any;
+
+    if (!Array.isArray(bundles) || bundles.length === 0) {
+      return reply.code(400).send({ error: 'bundles array is required' });
+    }
+    if (bundles.length > 100) {
+      return reply.code(400).send({ error: 'Too many bundles (max 100)' });
+    }
+
+    try {
+      // Verify sender is a group member
+      const memberCheck = await pool.query(
+        'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+
+      for (const bundle of bundles) {
+        const recipientUsername = typeof bundle.recipientUsername === 'string'
+          ? bundle.recipientUsername.toLowerCase().trim() : '';
+        const encryptedBundle = typeof bundle.encryptedBundle === 'string'
+          ? bundle.encryptedBundle : '';
+
+        if (!recipientUsername || !encryptedBundle) continue;
+        if (encryptedBundle.length > 8192) continue; // 8 KB max per bundle
+
+        // Resolve recipient UUID
+        const recipientRes = await pool.query(
+          'SELECT id FROM users WHERE LOWER(username) = $1',
+          [recipientUsername]
+        );
+        if (recipientRes.rows.length === 0) continue;
+        const recipientId = recipientRes.rows[0].id;
+
+        await pool.query(
+          `INSERT INTO group_sender_keys (group_id, sender_id, recipient_id, encrypted_bundle, updated_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (group_id, sender_id, recipient_id) DO UPDATE
+             SET encrypted_bundle = EXCLUDED.encrypted_bundle,
+                 updated_at = NOW()`,
+          [id, user.userId, recipientId, encryptedBundle]
+        );
+      }
+
+      return reply.send({ success: true });
+    } catch (err: any) {
+      fastify.log.error(err, 'POST /groups/:id/sender-key: DB error');
+      return reply.code(503).send({ error: 'Service temporarily unavailable' });
+    }
+  });
+
+  // GET /api/groups/:id/sender-key/:senderUsername
+  // Returns the encrypted SenderKey bundle that senderUsername uploaded for the requesting user.
+  fastify.get('/:id/sender-key/:senderUsername', async (request, reply) => {
+    const user = verifyToken(request.headers.authorization);
+    if (!user) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const { id, senderUsername } = request.params as any;
+
+    try {
+      // Verify requester is a group member
+      const memberCheck = await pool.query(
+        'SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2',
+        [id, user.userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+
+      // Resolve sender UUID
+      const senderRes = await pool.query(
+        'SELECT id FROM users WHERE LOWER(username) = $1',
+        [senderUsername.toLowerCase().trim()]
+      );
+      if (senderRes.rows.length === 0) {
+        return reply.code(404).send({ error: 'Sender not found' });
+      }
+      const senderId = senderRes.rows[0].id;
+
+      const result = await pool.query(
+        `SELECT encrypted_bundle FROM group_sender_keys
+         WHERE group_id = $1 AND sender_id = $2 AND recipient_id = $3`,
+        [id, senderId, user.userId]
+      );
+
+      if (result.rows.length === 0) {
+        return reply.code(404).send({ found: false });
+      }
+
+      return reply.send({
+        found: true,
+        encryptedBundle: result.rows[0].encrypted_bundle,
+      });
+    } catch (err: any) {
+      fastify.log.error(err, 'GET /groups/:id/sender-key/:senderUsername: DB error');
       return reply.code(503).send({ error: 'Service temporarily unavailable' });
     }
   });

@@ -7,8 +7,6 @@
 //
 //  For production builds, pass these in via --dart-define:
 //    flutter build apk --dart-define=BASE_URL=https://api.chatly.app
-//
-//  Author: Chatly Engineering Team
 // ============================================================
 
 class AppConfig {
@@ -16,8 +14,8 @@ class AppConfig {
 
   // ---------------------------------------------------------------------------
   // Base server URL.
-  // Reads the compile-time define BASE_URL if provided; falls back to localhost
-  // so developers can run everything locally without any extra config.
+  // Reads the compile-time define BASE_URL if provided; falls back to the
+  // production Render backend.
   // ---------------------------------------------------------------------------
   static const String apiBaseUrl = String.fromEnvironment(
     'BASE_URL',
@@ -33,8 +31,8 @@ class AppConfig {
       'WS_URL',
       defaultValue: 'wss://chatly-backend-nepf.onrender.com',
     );
-    // If the user only provided BASE_URL, derive the WS url from it.
-    if (base == 'wss://chatly-backend-nepf.onrender.com' && apiBaseUrl != 'https://chatly-backend-nepf.onrender.com/api') {
+    if (base == 'wss://chatly-backend-nepf.onrender.com' &&
+        apiBaseUrl != 'https://chatly-backend-nepf.onrender.com/api') {
       return apiBaseUrl
           .replaceFirst('https://', 'wss://')
           .replaceFirst('http://', 'ws://')
@@ -51,27 +49,8 @@ class AppConfig {
   static const String buildNumber = '1';
 
   // ---------------------------------------------------------------------------
-  // Feature flags — flip these to enable/disable experimental features without
-  // touching any screen code.
-  // ---------------------------------------------------------------------------
-
-  /// When true, the P2P Mesh (UDP/TCP offline messaging) is active.
-  static const bool enableP2PMesh = bool.fromEnvironment(
-    'ENABLE_P2P',
-    defaultValue: true,
-  );
-
-  /// When true, the Lucky Pulse anonymous feed is visible in navigation.
-  static const bool enableLuckyPulse = bool.fromEnvironment(
-    'ENABLE_PULSE',
-    defaultValue: true,
-  );
-
-  // ---------------------------------------------------------------------------
   // Network timeouts
   // ---------------------------------------------------------------------------
-
-  /// How long the client waits for a server response before timing out.
   static const Duration connectTimeout = Duration(seconds: 10);
   static const Duration receiveTimeout = Duration(seconds: 10);
 }

@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cryptography/cryptography.dart';
 import 'package:hive/hive.dart';
 import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../providers/connection_provider.dart';
@@ -14,6 +12,15 @@ import '../../../../services/message_storage_service.dart';
 import '../../../../services/websocket_service.dart';
 import '../../../chat/data/models/message_model.dart';
 
+/// Group chat screen with Signal Protocol Sender Key E2EE.
+///
+/// Key flow:
+///   Send: generateSenderKey (once) → distribute encrypted to each member → encryptGroupMessage
+///   Receive: fetchGroupSenderKey → decryptSenderKeyFromPeer → decryptGroupMessage
+///
+/// SenderKey state is persisted in the secure_vault Hive box so the chain key
+/// survives restarts. Peer keys are fetched lazily from the server and cached
+/// in memory for the lifetime of the screen.
 class GroupChatScreen extends ConsumerStatefulWidget {
   final String groupId;
   final String groupName;
@@ -29,7 +36,8 @@ class GroupChatScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<GroupChatScreen> createState() => _GroupChatScreenState();
+  ConsumerState<GroupChatScreen> createState() =>
+      _GroupChatScreenState();
 }
 
 class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
@@ -40,6 +48,17 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   Timer? _countdownTimer;
   StreamSubscription? _socketSubscription;
 
+  // ── Sender Key state ────────────────────────────────────────────────────────
+  SenderKeyRecord? _mySenderKey;
+  final Map<String, SenderKeyRecord> _peerSenderKeys = {};
+  // Tracks which peers we've already distributed our SenderKey to this session
+  final Set<String> _distributedTo = {};
+
+  // ─── Vault key (Hive box name for our own SenderKey) ───────────────────────
+  String get _mySkVaultKey => 'group_sk_${widget.groupId}';
+  // Peer SenderKey vault key
+  String _peerSkVaultKey(String username) =>
+      'group_peer_sk_${widget.groupId}_$username';
 
   @override
   void initState() {
@@ -48,36 +67,40 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     _syncMessages();
 
     if (widget.isCampfire && widget.expiresAt != null) {
-      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _countdownTimer =
+          Timer.periodic(const Duration(seconds: 1), (timer) {
         if (!mounted) return;
         final now = DateTime.now().millisecondsSinceEpoch;
         if (now >= widget.expiresAt!) {
           timer.cancel();
           Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('🔥 Campfire Group dissolved and database sector logs shredded!'),
-              backgroundColor: Color(0xFFEF4444),
-            ),
-          );
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content:
+                Text('🔥 Campfire Group dissolved — session keys wiped.'),
+            backgroundColor: Color(0xFFEF4444),
+          ));
         } else {
           setState(() {});
         }
       });
     }
 
-    _socketSubscription = WebSocketService().messageStream.listen((payload) async {
-      if (payload['type'] == 'group_message' && payload['groupId'] == widget.groupId) {
+    _socketSubscription =
+        WebSocketService().messageStream.listen((payload) async {
+      if (payload['type'] == 'group_message' &&
+          payload['groupId'] == widget.groupId) {
         final sender = payload['senderId']?.toString() ?? '';
-        final ciphertext = payload['ciphertext']?.toString() ?? '';
-        final timestamp = payload['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch;
-        
-        final myUsername = AuthService().username;
-        if (sender == myUsername) return; // Already loaded locally
+        final ciphertext =
+            payload['ciphertext']?.toString() ?? '';
+        final timestamp = payload['timestamp'] as int? ??
+            DateTime.now().millisecondsSinceEpoch;
 
-        final key = await _getGroupKey();
-        final plaintext = await _decrypt(ciphertext, key);
-        
+        final myUsername = AuthService().username;
+        if (sender == myUsername) return;
+
+        final plaintext =
+            await _decryptFromPeer(sender, ciphertext);
+
         final msg = MessageData(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           text: plaintext,
@@ -87,93 +110,223 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
           isRead: true,
           timestamp: timestamp,
         );
-        
-        await MessageStorageService().saveGroupMessage(widget.groupId, msg);
+
+        await MessageStorageService()
+            .saveGroupMessage(widget.groupId, msg);
         if (mounted) {
-          setState(() {
-            _messages.add(msg);
-          });
+          setState(() => _messages.add(msg));
           _scrollToBottom();
         }
       }
     });
   }
 
-  Future<SecretKey> _getGroupKey() async {
-    // Use a per-group random key stored in the secure vault.
-    // This is still not true E2EE (server can read as it relays plaintext during transit)
-    // but at minimum the key is random and not derived from the public group ID.
-    final secureBox = await Hive.openBox('secure_vault');
-    final cacheKey = 'group_key_${widget.groupId}';
-    String? storedKeyBase64 = secureBox.get(cacheKey) as String?;
+  // ─── Own SenderKey — load from vault or generate ───────────────────────────
+  Future<SenderKeyRecord> _getOrCreateMySenderKey() async {
+    if (_mySenderKey != null) return _mySenderKey!;
 
-    if (storedKeyBase64 == null) {
-      // Generate a random 32-byte key for this group
-      final random = Random.secure();
-      final keyBytes = List<int>.generate(32, (_) => random.nextInt(256));
-      storedKeyBase64 = base64Encode(keyBytes);
-      await secureBox.put(cacheKey, storedKeyBase64);
+    final vault = await Hive.openBox('secure_vault');
+    final stored = vault.get(_mySkVaultKey) as String?;
+
+    if (stored != null) {
+      _mySenderKey = SenderKeyRecord.fromJson(
+          jsonDecode(stored) as Map<String, dynamic>);
+      return _mySenderKey!;
     }
 
-    final keyBytes = base64Decode(storedKeyBase64);
-    return SecretKey(keyBytes);
-  }
-
-  Future<String> _decrypt(String ciphertext, SecretKey key) async {
-    try {
-      return await EncryptionService().decryptMessage(
-        encryptedPacketBase64: ciphertext,
-        secretKey: key,
-      );
-    } catch (_) {
-      return '[Decryption failed]';
-    }
-  }
-
-  Future<String> _encrypt(String plaintext, SecretKey key) async {
-    return await EncryptionService().encryptMessage(
-      plaintext: plaintext,
-      secretKey: key,
+    // Generate fresh SenderKey
+    _mySenderKey = await EncryptionService().generateSenderKey(
+      groupId: widget.groupId,
+      myUsername: AuthService().username ?? 'me',
     );
+    await vault.put(
+        _mySkVaultKey, jsonEncode(_mySenderKey!.toJson()));
+    return _mySenderKey!;
   }
 
+  /// Persists the mutated SenderKey back to the vault after each message.
+  Future<void> _saveMySenderKey(SenderKeyRecord sk) async {
+    final vault = await Hive.openBox('secure_vault');
+    await vault.put(_mySkVaultKey, jsonEncode(sk.toJson()));
+  }
+
+  // ─── Distribute our SenderKey to group members we haven't reached yet ───────
+  Future<void> _distributeSenderKeyIfNeeded() async {
+    final mySk = await _getOrCreateMySenderKey();
+    final members = await ApiService().getGroupMembers(widget.groupId);
+    final myUsername = AuthService().username ?? '';
+
+    // Find members we haven't distributed to this session
+    final needed =
+        members.where((m) => m != myUsername && !_distributedTo.contains(m));
+    if (needed.isEmpty) return;
+
+    final vault = await Hive.openBox('secure_vault');
+    final bundles = <Map<String, String>>[];
+
+    for (final memberUsername in needed) {
+      // Fetch member's DH identity public key
+      final keyBundle =
+          await ApiService().fetchPublicKey(memberUsername);
+      if (keyBundle == null) continue;
+      final peerDhPub = keyBundle['dh_identity_key'] as String?;
+      if (peerDhPub == null || peerDhPub.isEmpty) continue;
+
+      // Encrypt our SenderKey for this member
+      final encrypted =
+          await EncryptionService().encryptSenderKeyForPeer(
+        senderKey: mySk,
+        peerDhIdentityPublicBase64: peerDhPub,
+      );
+      bundles.add({
+        'recipientUsername': memberUsername,
+        'encryptedBundle': encrypted,
+      });
+      _distributedTo.add(memberUsername);
+
+      // Persist current chain key state (encryption is non-destructive here
+      // but toJson captures the signingPrivateKey which must be consistent)
+      await vault.put(
+          _mySkVaultKey, jsonEncode(mySk.toJson()));
+    }
+
+    if (bundles.isNotEmpty) {
+      await ApiService()
+          .uploadGroupSenderKeyBundles(widget.groupId, bundles);
+    }
+  }
+
+  // ─── Fetch and cache a peer's SenderKey ────────────────────────────────────
+  Future<SenderKeyRecord?> _getPeerSenderKey(
+      String senderUsername) async {
+    if (_peerSenderKeys.containsKey(senderUsername)) {
+      return _peerSenderKeys[senderUsername];
+    }
+
+    // Check persistent vault cache first
+    final vault = await Hive.openBox('secure_vault');
+    final cached =
+        vault.get(_peerSkVaultKey(senderUsername)) as String?;
+    if (cached != null) {
+      final sk = SenderKeyRecord.fromJson(
+          jsonDecode(cached) as Map<String, dynamic>);
+      _peerSenderKeys[senderUsername] = sk;
+      return sk;
+    }
+
+    // Fetch encrypted bundle from server
+    final encrypted = await ApiService()
+        .fetchGroupSenderKey(widget.groupId, senderUsername);
+    if (encrypted == null) return null;
+
+    // Decrypt using my DH identity private key
+    final myVault = await Hive.openBox('secure_vault');
+    final myDhPriv =
+        myVault.get('identity_dh_private_key') as String?;
+    final myDhPub =
+        myVault.get('identity_dh_public_key') as String?;
+    if (myDhPriv == null || myDhPub == null) return null;
+
+    final sk = await EncryptionService().decryptSenderKeyFromPeer(
+      encryptedBundleBase64: encrypted,
+      myDhIdentityPrivateBase64: myDhPriv,
+      myDhIdentityPublicBase64: myDhPub,
+    );
+
+    _peerSenderKeys[senderUsername] = sk;
+    // Persist so we survive app restarts
+    await vault.put(
+        _peerSkVaultKey(senderUsername), jsonEncode(sk.toJson()));
+    return sk;
+  }
+
+  /// Saves mutated peer SenderKey back to vault and in-memory cache.
+  Future<void> _savePeerSenderKey(
+      String username, SenderKeyRecord sk) async {
+    _peerSenderKeys[username] = sk;
+    final vault = await Hive.openBox('secure_vault');
+    await vault.put(
+        _peerSkVaultKey(username), jsonEncode(sk.toJson()));
+  }
+
+  // ─── Encrypt / Decrypt ─────────────────────────────────────────────────────
+  Future<String> _encryptMessage(String plaintext) async {
+    final sk = await _getOrCreateMySenderKey();
+    final ciphertext = await EncryptionService().encryptGroupMessage(
+      senderKey: sk,
+      plaintext: plaintext,
+    );
+    await _saveMySenderKey(sk);
+    return ciphertext;
+  }
+
+  Future<String> _decryptFromPeer(
+      String sender, String ciphertext) async {
+    try {
+      final sk = await _getPeerSenderKey(sender);
+      if (sk == null) {
+        return '[Sender key not available — ask ${sender} to re-open the group]';
+      }
+      final plaintext = await EncryptionService()
+          .decryptGroupMessage(senderKey: sk, encryptedPacketBase64: ciphertext);
+      await _savePeerSenderKey(sender, sk);
+      return plaintext;
+    } catch (e) {
+      return '[Decryption failed: $e]';
+    }
+  }
+
+  // ─── Helpers ───────────────────────────────────────────────────────────────
   String _formatTimestamp(int timestamp) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal();
-    final hour = dt.hour.toString().padLeft(2, '0');
-    final minute = dt.minute.toString().padLeft(2, '0');
-    return '$hour:$minute';
+    final dt =
+        DateTime.fromMillisecondsSinceEpoch(timestamp).toLocal();
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 
   Future<void> _loadLocalMessages() async {
-    final localMsgs = await MessageStorageService().getGroupMessages(widget.groupId);
+    final msgs = await MessageStorageService()
+        .getGroupMessages(widget.groupId);
     if (mounted) {
       setState(() {
         _messages.clear();
-        _messages.addAll(localMsgs);
+        _messages.addAll(msgs);
       });
       _scrollToBottom();
     }
   }
 
   Future<void> _syncMessages() async {
-    final key = await _getGroupKey();
-    final rawMsgs = await ApiService().getGroupMessages(widget.groupId);
+    // Ensure our SenderKey is distributed before we start syncing
+    _distributeSenderKeyIfNeeded(); // fire-and-forget; don't await to not block UI
+
+    final rawMsgs =
+        await ApiService().getGroupMessages(widget.groupId);
     final myUsername = AuthService().username;
-    
+
     for (final raw in rawMsgs) {
       final id = raw['id']?.toString() ?? '';
       final sender = raw['sender']?.toString() ?? '';
-      final ciphertext = raw['text']?.toString() ?? '';
+      final ciphertext =
+          (raw['ciphertext'] ?? raw['text'])?.toString() ?? '';
       final createdAtStr = raw['created_at']?.toString() ?? '';
-      
+
       int timestamp = DateTime.now().millisecondsSinceEpoch;
       try {
-        timestamp = DateTime.parse(createdAtStr).toLocal().millisecondsSinceEpoch;
+        timestamp = DateTime.parse(createdAtStr)
+            .toLocal()
+            .millisecondsSinceEpoch;
       } catch (_) {}
-      
-      final plaintext = await _decrypt(ciphertext, key);
+
       final isMe = sender == myUsername;
-      
+      String plaintext;
+      if (isMe) {
+        // We can't re-decrypt our own messages from the server because we've
+        // already advanced the send chain. Use local storage instead.
+        plaintext = '[Your message]';
+      } else {
+        plaintext = await _decryptFromPeer(sender, ciphertext);
+      }
+
       final msg = MessageData(
         id: id,
         text: plaintext,
@@ -183,16 +336,17 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
         isRead: true,
         timestamp: timestamp,
       );
-      
-      await MessageStorageService().saveGroupMessage(widget.groupId, msg);
+      await MessageStorageService()
+          .saveGroupMessage(widget.groupId, msg);
     }
-    
+
     await _loadLocalMessages();
   }
 
   String _getCampfireTimeRemaining() {
     if (widget.expiresAt == null) return '';
-    final remaining = widget.expiresAt! - DateTime.now().millisecondsSinceEpoch;
+    final remaining =
+        widget.expiresAt! - DateTime.now().millisecondsSinceEpoch;
     if (remaining <= 0) return 'Dissolving...';
     final totalSecs = (remaining / 1000).ceil();
     final mins = totalSecs ~/ 60;
@@ -209,16 +363,14 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     super.dispose();
   }
 
-
   void _handleSendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-
     final myUsername = AuthService().username ?? 'Me';
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    
-    final newMessage = MessageData(
+
+    final optimisticMsg = MessageData(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       text: text,
       isMe: true,
@@ -230,25 +382,24 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     );
 
     _messageController.clear();
-    
-    setState(() {
-      _messages.add(newMessage);
-    });
+    setState(() => _messages.add(optimisticMsg));
     _scrollToBottom();
 
-    final key = await _getGroupKey();
-    final ciphertext = await _encrypt(text, key);
-    
+    // Distribute SenderKey to any new members before sending
+    await _distributeSenderKeyIfNeeded();
+
+    // Encrypt with Signal Sender Key
+    final ciphertext = await _encryptMessage(text);
+
     final wasSent = await WebSocketService().sendGroupMessage(
       groupId: widget.groupId,
       ciphertext: ciphertext,
     );
-    
-    newMessage.isSent = wasSent;
-    await MessageStorageService().saveGroupMessage(widget.groupId, newMessage);
-    if (mounted) {
-      setState(() {});
-    }
+
+    optimisticMsg.isSent = wasSent;
+    await MessageStorageService()
+        .saveGroupMessage(widget.groupId, optimisticMsg);
+    if (mounted) setState(() {});
   }
 
   void _scrollToBottom() {
@@ -263,13 +414,15 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     });
   }
 
+  // ─── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    
+
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF0B132B) : const Color(0xFFF1F5F9),
+      backgroundColor:
+          isDark ? const Color(0xFF0B132B) : const Color(0xFFF1F5F9),
       appBar: AppBar(
         title: Row(
           children: [
@@ -282,27 +435,32 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                       Flexible(
                         child: Text(
                           widget.groupName,
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (widget.isCampfire) ...[
                         const SizedBox(width: 6),
-                        const Icon(Icons.local_fire_department_rounded, color: Color(0xFFEF4444), size: 18),
+                        const Icon(
+                            Icons.local_fire_department_rounded,
+                            color: Color(0xFFEF4444),
+                            size: 18),
                       ],
                     ],
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    widget.isCampfire 
+                    widget.isCampfire
                         ? _getCampfireTimeRemaining()
-                        : '$_membersCount members online',
+                        : '$_membersCount members · Signal E2EE',
                     style: TextStyle(
                       fontSize: 11,
-                      color: widget.isCampfire 
+                      color: widget.isCampfire
                           ? const Color(0xFFEF4444)
-                          : theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.6),
-                      fontWeight: widget.isCampfire ? FontWeight.bold : FontWeight.normal,
+                          : const Color(0xFF10B981),
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
@@ -313,34 +471,30 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.person_add_rounded),
-            onPressed: () {
-              _showInviteMembersDialog(context);
-            },
+            onPressed: () => _showInviteMembersDialog(context),
           ),
           IconButton(
             icon: const Icon(Icons.info_outline_rounded),
-            onPressed: () {
-              _showGroupInfoDialog(context);
-            },
+            onPressed: () => _showGroupInfoDialog(context),
           ),
         ],
       ),
       body: SafeArea(
         child: Column(
           children: [
-
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 16),
                 itemCount: _messages.length,
                 itemBuilder: (context, index) {
                   final msg = _messages[index];
-                  return _buildGroupMessageBubble(msg, theme, isDark);
+                  return _buildGroupMessageBubble(
+                      msg, theme, isDark);
                 },
               ),
             ),
-
             _buildInputBar(theme),
           ],
         ),
@@ -348,21 +502,24 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     );
   }
 
-  Widget _buildGroupMessageBubble(MessageData msg, ThemeData theme, bool isDark) {
+  Widget _buildGroupMessageBubble(
+      MessageData msg, ThemeData theme, bool isDark) {
     final isMe = msg.isMe;
-    
+
     if (msg.sender == 'System') {
       return Center(
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          padding: const EdgeInsets.symmetric(
+              horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.05),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
             msg.text,
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
+            style: const TextStyle(
+                color: Colors.white38, fontSize: 11),
           ),
         ),
       );
@@ -370,34 +527,42 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
 
     final bubbleColor = isMe
         ? theme.primaryColor
-        : (isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0));
-
+        : (isDark
+            ? const Color(0xFF1E293B)
+            : const Color(0xFFE2E8F0));
     final textColor = isMe
         ? Colors.white
         : (isDark ? Colors.white : Colors.black87);
 
     return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      alignment:
+          isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.75),
         child: Column(
-          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: isMe
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
           children: [
             if (!isMe)
               Padding(
-                padding: const EdgeInsets.only(left: 6, bottom: 4),
+                padding:
+                    const EdgeInsets.only(left: 6, bottom: 4),
                 child: Text(
                   msg.sender ?? 'Unknown',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
-                    color: theme.primaryColor.withValues(alpha: 0.85),
+                    color: theme.primaryColor
+                        .withValues(alpha: 0.85),
                   ),
                 ),
               ),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: bubbleColor,
                 borderRadius: BorderRadius.only(
@@ -412,7 +577,10 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                 children: [
                   Text(
                     msg.text,
-                    style: TextStyle(color: textColor, fontSize: 14, height: 1.4),
+                    style: TextStyle(
+                        color: textColor,
+                        fontSize: 14,
+                        height: 1.4),
                   ),
                   const SizedBox(height: 4),
                   Row(
@@ -421,14 +589,18 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                       Text(
                         msg.time,
                         style: TextStyle(
-                          color: isMe ? Colors.white60 : Colors.black45,
+                          color: isMe
+                              ? Colors.white60
+                              : Colors.black45,
                           fontSize: 8,
                         ),
                       ),
                       if (isMe) ...[
                         const SizedBox(width: 4),
                         Icon(
-                          msg.isSent ? Icons.done_all : Icons.access_time,
+                          msg.isSent
+                              ? Icons.done_all
+                              : Icons.access_time,
                           size: 10,
                           color: Colors.white60,
                         ),
@@ -446,10 +618,14 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
 
   Widget _buildInputBar(ThemeData theme) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(
+          horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: theme.cardColor,
-        border: Border(top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.08))),
+        border: Border(
+            top: BorderSide(
+                color: theme.dividerColor
+                    .withValues(alpha: 0.08))),
       ),
       child: Row(
         children: [
@@ -457,12 +633,13 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
             child: TextField(
               controller: _messageController,
               decoration: const InputDecoration(
-                hintText: 'Type group message...',
+                hintText: 'Type message (Signal E2EE)...',
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 fillColor: Colors.transparent,
-                contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 8),
               ),
               onSubmitted: (_) => _handleSendMessage(),
             ),
@@ -495,15 +672,21 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
             children: [
               const Text(
                 'Invite Contacts to Group',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16),
               ),
               const SizedBox(height: 16),
               if (connections.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 20),
                   child: Text(
-                    'No active connections found. You can only invite users who are in your secure contact list.',
-                    style: TextStyle(color: Colors.white60, fontSize: 13, height: 1.4),
+                    'No active connections found.',
+                    style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 13,
+                        height: 1.4),
                     textAlign: TextAlign.center,
                   ),
                 )
@@ -519,35 +702,26 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                           username: contact,
                           radius: 18,
                         ),
-                        title: Text(contact, style: const TextStyle(color: Colors.white)),
-                        trailing: const Icon(Icons.send_rounded, color: Color(0xFF8083FF)),
+                        title: Text(contact,
+                            style: const TextStyle(
+                                color: Colors.white)),
+                        trailing: const Icon(
+                            Icons.send_rounded,
+                            color: Color(0xFF8083FF)),
                         onTap: () async {
-                          setState(() {
-                            _messages.add(
-                              MessageData(
-                                id: DateTime.now().microsecondsSinceEpoch.toString(),
-                                text: 'You invited @$contact to the group.',
-                                isMe: true,
-                                isRead: true,
-                                sender: 'System',
-                                time: _formatTimestamp(DateTime.now().millisecondsSinceEpoch),
-                                timestamp: DateTime.now().millisecondsSinceEpoch,
-                              ),
-                            );
-                            _membersCount++;
-                          });
                           Navigator.of(context).pop();
-                          
-                          // Call Api to invite/join
-                          await ApiService().joinGroup(widget.groupId); // simulate invite join for this demo user
-                          
+                          await ApiService()
+                              .joinGroup(widget.groupId);
+                          // SenderKey will be distributed on next send
+                          _distributedTo.clear();
                           if (!context.mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Invited @$contact to this group room.'),
-                              backgroundColor: const Color(0xFF10B981),
-                            ),
-                          );
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(SnackBar(
+                            content: Text(
+                                'Invited @$contact — E2EE keys will be exchanged on next message.'),
+                            backgroundColor:
+                                const Color(0xFF10B981),
+                          ));
                         },
                       );
                     },
@@ -573,9 +747,16 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
           ),
           title: Row(
             children: [
-              const Icon(Icons.info_outline_rounded, color: Color(0xFF8083FF)),
+              const Icon(Icons.info_outline_rounded,
+                  color: Color(0xFF8083FF)),
               const SizedBox(width: 10),
-              Text(widget.groupName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              Flexible(
+                child: Text(widget.groupName,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
+              ),
             ],
           ),
           content: Column(
@@ -583,22 +764,30 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'This group room uses end-to-end post-quantum encryption. Messages are transient and encrypted.',
-                style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.45),
+                'This group uses Signal Protocol Sender Key E2EE. '
+                'Each member independently generates a SenderKey '
+                'and distributes it encrypted to peers. The server '
+                'stores only opaque ciphertext.',
+                style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    height: 1.45),
               ),
               const SizedBox(height: 16),
               const Divider(color: Colors.white10),
               const SizedBox(height: 10),
-              _buildInfoRow('Discovery Mode', 'Invite-Only / Secure Handshake'),
-              _buildInfoRow('Total Members', '$_membersCount members'),
-              _buildInfoRow('Max Create Limit', '25 groups per user'),
-              _buildInfoRow('Max Join Limit', '50 groups per user'),
+              _buildInfoRow('Protocol', 'Signal Sender Keys (HMAC ratchet)'),
+              _buildInfoRow('Signing', 'Ed25519 per message'),
+              _buildInfoRow(
+                  'Key Distribution', 'X25519 ECDH + AES-256-GCM'),
+              _buildInfoRow('Members', '$_membersCount'),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close', style: TextStyle(color: Colors.white60)),
+              child: const Text('Close',
+                  style: TextStyle(color: Colors.white60)),
             ),
           ],
         );
@@ -612,8 +801,17 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11)),
-          Text(value, style: const TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.bold, fontSize: 11)),
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.white60, fontSize: 11)),
+          Flexible(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    color: Color(0xFF10B981),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11)),
+          ),
         ],
       ),
     );

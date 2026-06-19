@@ -1,10 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive/hive.dart';
 import 'group_chat_screen.dart';
 import '../../../../core/widgets/beautiful_avatar.dart';
 import '../../../../providers/layout_provider.dart';
 import '../../../../services/api_service.dart';
+import '../../../../services/auth_service.dart';
+import '../../../../services/encryption_service.dart';
 
 class GroupsListScreen extends ConsumerStatefulWidget {
   const GroupsListScreen({super.key});
@@ -52,6 +58,33 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
         }
       }
     });
+  }
+
+  /// Generates a random 32-byte AES-256 group key and stores it server-side
+  /// wrapped (ECIES) under the creator's own DH identity public key.
+  Future<void> _initGroupKey(String groupId) async {
+    try {
+      final secureBox = await Hive.openBox('secure_vault');
+      final myDhPriv = secureBox.get('identity_dh_private_key') as String?;
+      final myDhPub = secureBox.get('identity_dh_public_key') as String?;
+      if (myDhPriv == null || myDhPub == null) return;
+
+      final random = Random.secure();
+      final groupKeyBytes = List<int>.generate(32, (_) => random.nextInt(256));
+
+      // Cache decrypted key locally so we don't need to re-wrap immediately
+      await secureBox.put('group_key_dec_$groupId', base64Encode(groupKeyBytes));
+
+      // Wrap for self and store on server
+      final wrappedForSelf = await EncryptionService().wrapGroupKey(
+        groupKey: groupKeyBytes,
+        recipientDhPublicBase64: myDhPub,
+      );
+      final myUsername = AuthService().username ?? '';
+      await ApiService().distributeGroupKey(groupId, myUsername, wrappedForSelf);
+    } catch (e) {
+      debugPrint('_initGroupKey error: $e');
+    }
   }
 
   Future<void> _loadGroups() async {
@@ -477,6 +510,10 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                             );
 
                             if (res != null) {
+                              final newGroupId = res['id'] as String? ?? '';
+                              if (newGroupId.isNotEmpty) {
+                                await _initGroupKey(newGroupId);
+                              }
                               await _loadGroups();
                               if (context.mounted) {
                                 Navigator.of(context).pop();

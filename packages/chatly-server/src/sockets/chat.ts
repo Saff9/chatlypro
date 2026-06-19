@@ -198,7 +198,14 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
             safeSend(socket, JSON.stringify({ type: 'error', error: 'ciphertext too large' }));
             break;
           }
-          await relayE2EMessage(username, String(message.recipientId), String(message.ciphertext));
+          await relayE2EMessage(username, String(message.recipientId), String(message.ciphertext), message.clientId);
+          // Acknowledge delivery to sender so the client can flip isSent = true
+          safeSend(socket, JSON.stringify({
+            type: 'sent_ack',
+            clientId: message.clientId ?? null,
+            recipientId: String(message.recipientId),
+            timestamp: Date.now(),
+          }));
           break;
 
         case 'typing':
@@ -245,6 +252,10 @@ export async function handleWebSocketConnection(socket: WebSocket, req: any) {
 }
 
 // ─── Deliver Offline Messages ──────────────────────────────────────────────────
+// Delivers messages that were queued while the recipient was offline.
+// Both 1-to-1 and group messages share the same key namespace; the groupId field
+// distinguishes them. The payload is spread at the top level so the client can
+// read senderId / ciphertext / groupId without an extra nesting layer.
 async function deliverOfflineMessages(recipientUsername: string, socket: WebSocket) {
   // Try Redis first
   try {
@@ -254,7 +265,10 @@ async function deliverOfflineMessages(recipientUsername: string, socket: WebSock
         const data = await redisClient.get(key);
         if (data) {
           try {
-            safeSend(socket, JSON.stringify({ type: 'message', data: JSON.parse(data) }));
+            const parsed = JSON.parse(data);
+            // Spread the stored payload so top-level fields are accessible on the client
+            const msgType = parsed.groupId ? 'group_message' : 'message';
+            safeSend(socket, JSON.stringify({ type: msgType, ...parsed }));
           } catch {
             // Skip malformed cached message
           }
@@ -267,7 +281,7 @@ async function deliverOfflineMessages(recipientUsername: string, socket: WebSock
     console.warn('[WS] Redis offline fetch failed, trying memory:', err.message);
   }
 
-  // Memory fallback
+  // Memory fallback — in-memory queue only stores 1-to-1 messages
   const pending = inMemoryOfflineQueue.filter(m => m.recipientId === recipientUsername);
   for (const msg of pending) {
     safeSend(socket, JSON.stringify({
@@ -282,7 +296,10 @@ async function deliverOfflineMessages(recipientUsername: string, socket: WebSock
 }
 
 // ─── Relay E2E Encrypted Message ──────────────────────────────────────────────
-async function relayE2EMessage(senderUsername: string, recipientUsername: string, ciphertext: string) {
+// clientId is an optional opaque token the sender attached; it is not used
+// server-side but is echoed back in the sent_ack so the client can correlate
+// the acknowledgement with its own optimistic message object.
+async function relayE2EMessage(senderUsername: string, recipientUsername: string, ciphertext: string, clientId?: string) {
   const recipientSocket = activeConnections.get(recipientUsername);
   const payload = { senderId: senderUsername, ciphertext, timestamp: Date.now() };
 
@@ -347,7 +364,7 @@ async function relayGroupMessage(senderUsername: string, groupId: string, cipher
     }
 
     await pool.query(
-      'INSERT INTO group_messages (group_id, sender_id, text) VALUES ($1, $2, $3)',
+      'INSERT INTO group_messages (group_id, sender_id, ciphertext) VALUES ($1, $2, $3)',
       [groupId, senderId, ciphertext]
     );
 
@@ -372,11 +389,34 @@ async function relayGroupMessage(senderUsername: string, groupId: string, cipher
       if (memberSocket) {
         safeSend(memberSocket, JSON.stringify(payload));
       } else {
+        // Member is offline — queue message in Redis so it is delivered on reconnect
+        const msgId = crypto.randomUUID();
+        const queued = await redisClient.set(
+          `msg:${memberUsername}:${msgId}`,
+          JSON.stringify(payload),
+          'EX', 86_400 // 24h TTL
+        ).catch(() => null);
+
+        if (!queued) {
+          // Redis unavailable — fall back to bounded in-memory queue
+          const count = inMemoryOfflineQueue.filter(m => m.recipientId === memberUsername).length;
+          if (count < 100) {
+            inMemoryOfflineQueue.push({
+              id: msgId,
+              senderId: senderUsername,
+              recipientId: memberUsername,
+              ciphertext,
+              timestamp: payload.timestamp,
+            });
+          }
+        }
+
+        // Silent push to wake the device
         try {
           const pushRes = await pool.query('SELECT push_token FROM users WHERE username = $1', [memberUsername]);
           const pushToken = pushRes.rows[0]?.push_token;
           if (pushToken) {
-            await sendSilentPush(pushToken, `group-msg-${groupId}-${Date.now()}`);
+            await sendSilentPush(pushToken, `group-msg-${groupId}-${msgId}`);
           }
         } catch (_) {}
       }

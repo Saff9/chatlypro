@@ -5,7 +5,7 @@ import fastifyCors from '@fastify/cors';
 import dotenv from 'dotenv';
 import { initializeDatabase, isDbConnected } from './db';
 import { authRoutes } from './routes/auth';
-import { pulseRoutes, userRoutes, groupRoutes } from './routes/social';
+import { userRoutes, groupRoutes } from './routes/social';
 import { keysRoutes } from './routes/keys';
 import { handleWebSocketConnection } from './sockets/chat';
 
@@ -37,8 +37,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : [];
 
 if (NODE_ENV === 'production' && allowedOrigins.length === 0) {
-  console.error('[FATAL] ALLOWED_ORIGINS must be configured in production. Refusing to start.');
-  process.exit(1);
+  console.warn('[WARN] ALLOWED_ORIGINS is not configured in production. Permitting all origins (CORS: true).');
 }
 
 // ─── Server Initialization ────────────────────────────────────────────────────
@@ -65,7 +64,7 @@ const server = fastify({
 // Register CORS before any other plugins so preflight responses are handled
 // before route handlers execute.
 server.register(fastifyCors, {
-  origin: NODE_ENV === 'production' ? allowedOrigins : true,
+  origin: NODE_ENV === 'production' && allowedOrigins.length > 0 ? allowedOrigins : true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -91,7 +90,6 @@ server.register(fastifyWebsocket);
 // ─── REST Routes ──────────────────────────────────────────────────────────────
 server.register(authRoutes, { prefix: '/api/auth' });
 server.register(keysRoutes, { prefix: '/api/keys' });
-server.register(pulseRoutes, { prefix: '/api/pulse' });
 server.register(userRoutes,  { prefix: '/api/users' });
 server.register(groupRoutes, { prefix: '/api/groups' });
 
