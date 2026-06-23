@@ -42,7 +42,7 @@ class GroupChatScreen extends ConsumerStatefulWidget {
 }
 
 class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
-  int _membersCount = 1;
+  final int _membersCount = 1;
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   final List<MessageData> _messages = [];
@@ -266,7 +266,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     try {
       final sk = await _getPeerSenderKey(sender);
       if (sk == null) {
-        return '[Sender key not available — ask ${sender} to re-open the group]';
+        return '[Sender key not available — ask $sender to re-open the group]';
       }
       final plaintext = await EncryptionService()
           .decryptGroupMessage(senderKey: sk, encryptedPacketBase64: ciphertext);

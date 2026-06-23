@@ -27,7 +27,6 @@ class BubbleBackgroundPainter extends CustomPainter {
     final path = Path();
     const r = 16.0; // corner radius
     const tw = 6.0; // tail width
-    const th = 8.0; // tail height
 
     if (isMe) {
       // Draw me bubble
