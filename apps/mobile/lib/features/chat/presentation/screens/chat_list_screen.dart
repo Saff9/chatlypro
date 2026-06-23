@@ -14,16 +14,33 @@ import '../../../../services/api_service.dart';
 import '../../../../core/widgets/beautiful_avatar.dart';
 
 class ChatListScreen extends ConsumerStatefulWidget {
-  const ChatListScreen({super.key});
+  final bool isEmbedded;
+  const ChatListScreen({super.key, this.isEmbedded = false});
 
   @override
-  ConsumerState<ChatListScreen> createState() => _ChatListScreenState();
+  ConsumerState<ChatListScreen> createState() => ChatListScreenState();
 }
 
-class _ChatListScreenState extends ConsumerState<ChatListScreen> {
+class ChatListScreenState extends ConsumerState<ChatListScreen> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
   bool _isSearching = false;
+
+  void setSearchQuery(String query) {
+    if (mounted) {
+      setState(() {
+        _searchQuery = query.toLowerCase().trim();
+      });
+    }
+  }
+
+  Future<void> scanQRCode() async {
+    final granted = await _requestCameraPermission(context);
+    if (granted && mounted) {
+      _showQRScannerDialog(context);
+    }
+  }
+
 
   final List<ChatListItemData> _chats = [];
   Set<String> _pinnedChats = {};
@@ -416,157 +433,15 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    ref.listen(connectionProvider, (previous, next) {
-      _loadChats();
-    });
-
-    final theme = Theme.of(context);
-    final densityBox = Hive.box('settings');
-    final int density =
-        densityBox.get('chat_tile_density', defaultValue: 5) as int;
-    final double verticalMargin =
-        (6.0 - (density - 5) * 1.0).clamp(2.0, 8.0);
-    final double verticalPadding =
-        (8.0 - (density - 5) * 2.0).clamp(0.0, 12.0);
-
-    final textColor =
-        theme.textTheme.bodyLarge?.color ?? const Color(0xFFE4E1ED);
-    final subColor =
-        theme.textTheme.bodyMedium?.color ?? const Color(0xFFC7C4D7);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: _isSearching
-            ? TextField(
-                controller: _searchController,
-                autofocus: true,
-                style: TextStyle(color: textColor, fontSize: 15),
-                decoration: InputDecoration(
-                  hintText: 'Search chats or @username...',
-                  hintStyle: TextStyle(
-                      color: subColor.withValues(alpha: 0.5)),
-                  border: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  fillColor: Colors.transparent,
-                  prefixIcon: Icon(Icons.search_rounded,
-                      color: subColor.withValues(alpha: 0.6)),
-                  suffixIcon: IconButton(
-                    icon: Icon(Icons.close_rounded,
-                        color: subColor.withValues(alpha: 0.6)),
-                    onPressed: () {
-                      setState(() {
-                        _isSearching = false;
-                        _searchController.clear();
-                        _searchQuery = '';
-                      });
-                    },
-                  ),
-                ),
-              )
-            : Row(
-                children: [
-                  Text('Chatly',
-                      style: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          backgroundColor: const Color(0xFF13131B),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                            side: const BorderSide(
-                                color: Colors.white10),
-                          ),
-                          title: const Text('End-to-End Encrypted',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold)),
-                          content: const Text(
-                            'All messages are protected by Signal Protocol '
-                            '(Double Ratchet + X3DH). Only you and your '
-                            'contacts can read them — the server never sees '
-                            'plaintext.',
-                            style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 13,
-                                height: 1.45),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () =>
-                                  Navigator.of(context).pop(),
-                              child: const Text('OK'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF10B981)
-                            .withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                            color: const Color(0xFF10B981)
-                                .withValues(alpha: 0.3),
-                            width: 1.0),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.shield_rounded,
-                              size: 10,
-                              color: Color(0xFF10B981)),
-                          const SizedBox(width: 4),
-                          Text(
-                            'E2EE',
-                            style: TextStyle(
-                              fontSize: 8,
-                              fontWeight: FontWeight.w800,
-                              color: const Color(0xFF10B981)
-                                  .withValues(alpha: 0.9),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-        centerTitle: false,
-        actions: [
-          if (!_isSearching) ...[
-            IconButton(
-              icon: const Icon(Icons.qr_code_scanner_rounded),
-              onPressed: () async {
-                final granted =
-                    await _requestCameraPermission(context);
-                if (granted && context.mounted) {
-                  _showQRScannerDialog(context);
-                }
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.search_rounded),
-              onPressed: () {
-                setState(() => _isSearching = true);
-              },
-            ),
-          ],
-        ],
-      ),
-      body: Column(
-        children: [
+  Widget _buildMainBody(
+      BuildContext context,
+      ThemeData theme,
+      Color textColor,
+      Color subColor,
+      double verticalMargin,
+      double verticalPadding) {
+    return Column(
+      children: [
           // Pending Incoming Connection Requests
           Consumer(
             builder: (context, ref, child) {
@@ -1039,11 +914,170 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
             }),
           ),
         ],
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(connectionProvider, (previous, next) {
+      _loadChats();
+    });
+
+    final theme = Theme.of(context);
+    final densityBox = Hive.box('settings');
+    final int density =
+        densityBox.get('chat_tile_density', defaultValue: 5) as int;
+    final double verticalMargin =
+        (6.0 - (density - 5) * 1.0).clamp(2.0, 8.0);
+    final double verticalPadding =
+        (8.0 - (density - 5) * 2.0).clamp(0.0, 12.0);
+
+    final textColor =
+        theme.textTheme.bodyLarge?.color ?? const Color(0xFFE4E1ED);
+    final subColor =
+        theme.textTheme.bodyMedium?.color ?? const Color(0xFFC7C4D7);
+
+    final mainBody = _buildMainBody(
+        context, theme, textColor, subColor, verticalMargin, verticalPadding);
+
+    if (widget.isEmbedded) {
+      return mainBody;
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: _isSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                style: TextStyle(color: textColor, fontSize: 15),
+                decoration: InputDecoration(
+                  hintText: 'Search chats or @username...',
+                  hintStyle: TextStyle(
+                      color: subColor.withValues(alpha: 0.5)),
+                  border: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  fillColor: Colors.transparent,
+                  prefixIcon: Icon(Icons.search_rounded,
+                      color: subColor.withValues(alpha: 0.6)),
+                  suffixIcon: IconButton(
+                    icon: Icon(Icons.close_rounded,
+                        color: subColor.withValues(alpha: 0.6)),
+                    onPressed: () {
+                      setState(() {
+                        _isSearching = false;
+                        _searchController.clear();
+                        _searchQuery = '';
+                      });
+                    },
+                  ),
+                ),
+              )
+            : Row(
+                children: [
+                  Text('Chatly',
+                      style: TextStyle(
+                          color: textColor,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          backgroundColor: const Color(0xFF13131B),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            side: const BorderSide(
+                                color: Colors.white10),
+                          ),
+                          title: const Text('End-to-End Encrypted',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
+                          content: const Text(
+                            'All messages are protected by Signal Protocol '
+                            '(Double Ratchet + X3DH). Only you and your '
+                            'contacts can read them — the server never sees '
+                            'plaintext.',
+                            style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                                height: 1.45),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.of(context).pop(),
+                              child: const Text('OK'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF10B981)
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: const Color(0xFF10B981)
+                                .withValues(alpha: 0.3),
+                            width: 1.0),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.shield_rounded,
+                              size: 10,
+                              color: Color(0xFF10B981)),
+                          const SizedBox(width: 4),
+                          Text(
+                            'E2EE',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF10B981)
+                                  .withValues(alpha: 0.9),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+        centerTitle: false,
+        actions: [
+          if (!_isSearching) ...[
+            IconButton(
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              onPressed: () async {
+                final granted =
+                    await _requestCameraPermission(context);
+                if (granted && context.mounted) {
+                  _showQRScannerDialog(context);
+                }
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.search_rounded),
+              onPressed: () {
+                setState(() => _isSearching = true);
+              },
+            ),
+          ],
+        ],
       ),
+      body: mainBody,
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 80.0),
         child: FloatingActionButton.extended(
-          onPressed: () => _showAddContactSheet(context),
+          onPressed: () => showAddContactSheet(context),
           backgroundColor: theme.primaryColor,
           elevation: 4,
           icon: const Icon(Icons.person_add_rounded,
@@ -1347,7 +1381,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen> {
     ).then((_) => usernameController.dispose());
   }
 
-  void _showAddContactSheet(BuildContext context) {
+  void showAddContactSheet(BuildContext context) {
     final controller = TextEditingController();
     final primaryColor = Theme.of(context).primaryColor;
 

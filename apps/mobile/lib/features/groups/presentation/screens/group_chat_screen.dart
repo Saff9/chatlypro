@@ -11,6 +11,7 @@ import '../../../../services/encryption_service.dart';
 import '../../../../services/message_storage_service.dart';
 import '../../../../services/websocket_service.dart';
 import '../../../chat/data/models/message_model.dart';
+import '../../../chat/presentation/widgets/message_bubble.dart';
 
 /// Group chat screen with Signal Protocol Sender Key E2EE.
 ///
@@ -504,115 +505,15 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
 
   Widget _buildGroupMessageBubble(
       MessageData msg, ThemeData theme, bool isDark) {
-    final isMe = msg.isMe;
-
-    if (msg.sender == 'System') {
-      return Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 8),
-          padding: const EdgeInsets.symmetric(
-              horizontal: 12, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(
-            msg.text,
-            style: const TextStyle(
-                color: Colors.white38, fontSize: 11),
-          ),
-        ),
-      );
-    }
-
-    final bubbleColor = isMe
-        ? theme.primaryColor
-        : (isDark
-            ? const Color(0xFF1E293B)
-            : const Color(0xFFE2E8F0));
-    final textColor = isMe
-        ? Colors.white
-        : (isDark ? Colors.white : Colors.black87);
-
-    return Align(
-      alignment:
-          isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.75),
-        child: Column(
-          crossAxisAlignment: isMe
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-          children: [
-            if (!isMe)
-              Padding(
-                padding:
-                    const EdgeInsets.only(left: 6, bottom: 4),
-                child: Text(
-                  msg.sender ?? 'Unknown',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: theme.primaryColor
-                        .withValues(alpha: 0.85),
-                  ),
-                ),
-              ),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: bubbleColor,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(20),
-                  topRight: const Radius.circular(20),
-                  bottomLeft: Radius.circular(isMe ? 20 : 4),
-                  bottomRight: Radius.circular(isMe ? 4 : 20),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    msg.text,
-                    style: TextStyle(
-                        color: textColor,
-                        fontSize: 14,
-                        height: 1.4),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        msg.time,
-                        style: TextStyle(
-                          color: isMe
-                              ? Colors.white60
-                              : Colors.black45,
-                          fontSize: 8,
-                        ),
-                      ),
-                      if (isMe) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          msg.isSent
-                              ? Icons.done_all
-                              : Icons.access_time,
-                          size: 10,
-                          color: Colors.white60,
-                        ),
-                      ]
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+    return ChatMessageBubble(
+      message: msg,
+      isPlaying: false,
+      isTranscriptExpanded: false,
+      waveHeights: const [],
+      onTogglePlay: () {},
+      onToggleTranscript: () {},
+      formatTime: (ts) => msg.time,
+      senderName: msg.sender,
     );
   }
 

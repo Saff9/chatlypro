@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
-import 'username_setup_screen.dart';
+import '../../../../navigation/main_navigation.dart';
 import 'email_verification_screen.dart';
 
 // SignupScreen — Entry point for new account creation.
@@ -19,6 +19,7 @@ class SignupScreen extends StatefulWidget {
 class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
+  final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
@@ -27,6 +28,7 @@ class _SignupScreenState extends State<SignupScreen> {
   bool _isLoading = false;
 
   final FocusNode _emailFocus = FocusNode();
+  final FocusNode _usernameFocus = FocusNode();
   final FocusNode _passwordFocus = FocusNode();
   final FocusNode _confirmFocus = FocusNode();
 
@@ -34,6 +36,7 @@ class _SignupScreenState extends State<SignupScreen> {
   void initState() {
     super.initState();
     _emailFocus.addListener(() => setState(() {}));
+    _usernameFocus.addListener(() => setState(() {}));
     _passwordFocus.addListener(() => setState(() {}));
     _confirmFocus.addListener(() => setState(() {}));
   }
@@ -41,9 +44,11 @@ class _SignupScreenState extends State<SignupScreen> {
   @override
   void dispose() {
     _emailController.dispose();
+    _usernameController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _emailFocus.dispose();
+    _usernameFocus.dispose();
     _passwordFocus.dispose();
     _confirmFocus.dispose();
     super.dispose();
@@ -55,14 +60,12 @@ class _SignupScreenState extends State<SignupScreen> {
     setState(() => _isLoading = true);
 
     final email = _emailController.text.trim();
-    // Use the local part of the email as a provisional username.
-    // The user will be prompted to pick a permanent username after verification.
-    final defaultUsername = email.split('@').first.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]'), '_');
+    final username = _usernameController.text.trim().toLowerCase();
 
     final result = await AuthService().register(
       email: email,
       password: _passwordController.text,
-      username: defaultUsername,
+      username: username,
     );
 
     if (!mounted) return;
@@ -80,13 +83,13 @@ class _SignupScreenState extends State<SignupScreen> {
         );
       } else {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const UsernameSetupScreen()),
+          MaterialPageRoute(builder: (_) => const MainNavigation()),
         );
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result.errorMessage ?? 'Registration failed. Try a different email.'),
+          content: Text(result.errorMessage ?? 'Registration failed. Try a different email/username.'),
           backgroundColor: const Color(0xFFEF4444),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -207,6 +210,28 @@ class _SignupScreenState extends State<SignupScreen> {
                             if (value == null || value.isEmpty) return 'Email is required';
                             if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
                               return 'Enter a valid email address';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 14),
+
+                        // Username field
+                        TextFormField(
+                          controller: _usernameController,
+                          focusNode: _usernameFocus,
+                          keyboardType: TextInputType.text,
+                          style: const TextStyle(color: Color(0xFFE4E1ED)),
+                          decoration: _fieldDecoration(
+                            hint: 'Username',
+                            prefixIcon: CupertinoIcons.at,
+                            isFocused: _usernameFocus.hasFocus,
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) return 'Username is required';
+                            if (value.trim().length < 3) return 'Username must be at least 3 characters';
+                            if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(value.trim())) {
+                              return 'Letters, numbers, _ and - only';
                             }
                             return null;
                           },

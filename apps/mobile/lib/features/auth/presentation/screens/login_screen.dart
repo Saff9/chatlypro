@@ -8,7 +8,6 @@ import 'signup_screen.dart';
 import 'forgot_password_screen.dart';
 import 'email_verification_screen.dart';
 import 'two_factor_screen.dart';
-import 'username_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -63,26 +62,17 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             );
           } else {
-            // Login success — check if username exists
-            final username = AuthService().username;
-            if (username != null && username.isNotEmpty) {
-              final box = Hive.box('settings');
-              await box.put('username', username);
-              await box.put('display_name', username);
-              
-              if (mounted) {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (context) => const MainNavigation()),
-                  (route) => false,
-                );
-              }
-            } else {
-              if (mounted) {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (context) => const UsernameSetupScreen()),
-                  (route) => false,
-                );
-              }
+            // Login success
+            final username = AuthService().username ?? '';
+            final box = Hive.box('settings');
+            await box.put('username', username);
+            await box.put('display_name', username);
+            
+            if (mounted) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const MainNavigation()),
+                (route) => false,
+              );
             }
           }
         } else {

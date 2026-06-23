@@ -97,22 +97,22 @@ class ThemeNotifier extends StateNotifier<ThemeStyle> {
       case ThemeStyle.light:
         return ThemeParams(
           brightness: Brightness.light,
-          primary: const Color(0xFF6366F1),
-          secondary: const Color(0xFF10B981),
-          background: const Color(0xFFF8FAFC),
+          primary: const Color(0xFF2481cc),
+          secondary: const Color(0xFF527fa6),
+          background: const Color(0xFFf0f5fa),
           surface: Colors.white,
-          text: const Color(0xFF0F172A),
-          textSecondary: const Color(0xFF64748B),
+          text: const Color(0xFF000000),
+          textSecondary: const Color(0xFF707f8c),
         );
       case ThemeStyle.dark:
         return ThemeParams(
           brightness: Brightness.dark,
-          primary: const Color(0xFF8083FF),
-          secondary: const Color(0xFFFFB300),
-          background: const Color(0xFF13131B),
-          surface: const Color(0xFF1B1B23),
-          text: const Color(0xFFF8FAFC),
-          textSecondary: const Color(0xFF94A3B8),
+          primary: const Color(0xFF5288c1),
+          secondary: const Color(0xFF2f6ea5),
+          background: const Color(0xFF17212b),
+          surface: const Color(0xFF1e2b38),
+          text: const Color(0xFFf5f6f7),
+          textSecondary: const Color(0xFF7f8c9a),
         );
       case ThemeStyle.ocean:
         return ThemeParams(

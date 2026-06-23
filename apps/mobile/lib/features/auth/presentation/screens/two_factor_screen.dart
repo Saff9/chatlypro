@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:hive/hive.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
-import 'username_setup_screen.dart';
+import '../../../../navigation/main_navigation.dart';
 
 class TwoFactorScreen extends StatefulWidget {
   final String email;
@@ -43,9 +44,17 @@ class _TwoFactorScreenState extends State<TwoFactorScreen> {
         });
 
         if (success) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const UsernameSetupScreen()),
-          );
+          final username = AuthService().username ?? '';
+          final box = Hive.box('settings');
+          await box.put('username', username);
+          await box.put('display_name', username);
+
+          if (mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (context) => const MainNavigation()),
+              (route) => false,
+            );
+          }
         } else {
           setState(() {
             _errorMessage = 'Invalid or expired 2-Step verification code.';

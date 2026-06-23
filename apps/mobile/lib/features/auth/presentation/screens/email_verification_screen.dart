@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import '../../../../services/auth_service.dart';
 import '../../../../core/widgets/glassmorphic_container.dart';
-import 'username_setup_screen.dart';
+import '../../../../navigation/main_navigation.dart';
 
 class EmailVerificationScreen extends StatefulWidget {
   final String email;
@@ -104,7 +104,7 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
 
         if (success) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const UsernameSetupScreen()),
+            MaterialPageRoute(builder: (context) => const MainNavigation()),
           );
         } else {
           setState(() {

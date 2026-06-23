@@ -13,16 +13,27 @@ import '../../../../services/auth_service.dart';
 import '../../../../services/encryption_service.dart';
 
 class GroupsListScreen extends ConsumerStatefulWidget {
-  const GroupsListScreen({super.key});
+  final bool isEmbedded;
+  const GroupsListScreen({super.key, this.isEmbedded = false});
 
   @override
-  ConsumerState<GroupsListScreen> createState() => _GroupsListScreenState();
+  ConsumerState<GroupsListScreen> createState() => GroupsListScreenState();
 }
 
-class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
+class GroupsListScreenState extends ConsumerState<GroupsListScreen> {
   Timer? _campfireTimer;
   final List<GroupItemData> _groups = [];
   bool _isLoading = false;
+  String _searchQuery = '';
+
+  void setSearchQuery(String query) {
+    if (mounted) {
+      setState(() {
+        _searchQuery = query.toLowerCase().trim();
+      });
+    }
+  }
+
 
   @override
   void initState() {
@@ -150,24 +161,13 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Groups'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline_rounded),
-            onPressed: () {
-              _showCreateGroupDialog(context, theme);
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
+  Widget _buildMainBody(BuildContext context, ThemeData theme) {
+    final filteredGroups = _searchQuery.isEmpty
+        ? _groups
+        : _groups.where((g) => g.name.toLowerCase().contains(_searchQuery)).toList();
+
+    return Column(
+      children: [
           Container(
             width: double.infinity,
             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -197,7 +197,7 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
            Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _groups.isEmpty
+                : filteredGroups.isEmpty
                 ? Center(
                     child: Padding(
                       padding: const EdgeInsets.all(32.0),
@@ -221,21 +221,23 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                             ),
                           ),
                           const SizedBox(height: 20),
-                          const Text(
-                            'No groups yet',
-                            style: TextStyle(
+                          Text(
+                            _searchQuery.isEmpty ? 'No groups yet' : 'No matching groups',
+                            style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                               color: Color(0xFFE4E1ED),
                             ),
                           ),
                           const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 40),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 40),
                             child: Text(
-                              'Create your first group or join one via a secure invite link.',
+                              _searchQuery.isEmpty
+                                  ? 'Create your first group or join one via a secure invite link.'
+                                  : 'Try searching for another name.',
                               textAlign: TextAlign.center,
-                              style: TextStyle(
+                              style: const TextStyle(
                                 fontSize: 13,
                                 color: Color(0xFFC7C4D7),
                                 height: 1.5,
@@ -248,10 +250,10 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
                   )
                 : ListView.separated(
               padding: const EdgeInsets.only(top: 8, bottom: 100),
-              itemCount: _groups.length,
+              itemCount: filteredGroups.length,
               separatorBuilder: (context, index) => const Divider(height: 1, indent: 80),
               itemBuilder: (context, index) {
-                final group = _groups[index];
+                final group = filteredGroups[index];
                 
                 Color healthColor;
                 if (group.healthScore > 0.8) {
@@ -366,12 +368,36 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
             ),
           ),
         ],
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mainBody = _buildMainBody(context, theme);
+
+    if (widget.isEmbedded) {
+      return mainBody;
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Groups'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline_rounded),
+            onPressed: () {
+              showCreateGroupDialog(context, theme);
+            },
+          ),
+        ],
       ),
+      body: mainBody,
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 80.0),
         child: FloatingActionButton(
           mini: true,
-          onPressed: () => _showCreateGroupDialog(context, theme),
+          onPressed: () => showCreateGroupDialog(context, theme),
           backgroundColor: theme.primaryColor,
           tooltip: 'New Group',
           child: const Icon(Icons.group_add_rounded, color: Colors.white, size: 20),
@@ -380,7 +406,7 @@ class _GroupsListScreenState extends ConsumerState<GroupsListScreen> {
     );
   }
 
-  void _showCreateGroupDialog(BuildContext context, ThemeData theme) {
+  void showCreateGroupDialog(BuildContext context, ThemeData theme) {
     final nameController = TextEditingController();
     final descController = TextEditingController();
     bool isCampfire = false;

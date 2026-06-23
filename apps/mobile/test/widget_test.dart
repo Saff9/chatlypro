@@ -1,30 +1,34 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:chatly/main.dart';
+import 'package:chatly/core/widgets/glassmorphic_container.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const ChatlyApp());
+  testWidgets('GlassmorphicContainer renders child and padding correctly', (WidgetTester tester) async {
+    const textKey = Key('test-child-text');
+    const childText = 'Hello E2EE';
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: GlassmorphicContainer(
+            padding: EdgeInsets.all(16.0),
+            child: Text(childText, key: textKey),
+          ),
+        ),
+      ),
+    );
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Verify child is rendered
+    expect(find.text(childText), findsOneWidget);
+    expect(find.byKey(textKey), findsOneWidget);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Verify container padding is applied
+    final container = tester.widget<Container>(
+      find.descendant(
+        of: find.byType(GlassmorphicContainer),
+        matching: find.byType(Container),
+      ).last,
+    );
+    expect(container.padding, const EdgeInsets.all(16.0));
   });
 }
